@@ -25,6 +25,20 @@ final class Screens {
     /** Banniere de fin de partie. */
     static final String GAME_OVER = "GAOV";
 
+    /** Les deux logos d'ouverture, dans l'ordre. */
+    static final String LOGO_1 = "LOG1";
+    static final String LOGO_2 = "LOG2";
+
+    /** Ecran des credits. */
+    static final String CREDITS = "CRED";
+
+    /** Ecran de fin, quand le jeu est acheve. {@code EndGamePicName}. */
+    static final String END = "LAST";
+
+    /** Duree d'affichage des logos, en images, telle que l'original les temporise. */
+    static final int LOGO_1_TICKS = 250;
+    static final int LOGO_2_TICKS = 400;
+
     /** Les quatre presentations de monde, dans l'ordre. */
     private static final String[] WORLDS = {"WLD1", "WLD2", "WLD3", "WLD4"};
 

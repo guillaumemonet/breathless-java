@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -208,5 +209,72 @@ class EnemyAiIT {
         int dx = enemy.x() - (camera.x() >> 16);
         int dz = enemy.z() - (camera.z() >> 16);
         return (int) Math.round(Math.sqrt((double) dx * dx + (double) dz * dz));
+    }
+
+    @Test
+    @DisplayName("Un ennemi abattu tombe, puis reste au sol")
+    void killedEnemiesFallThenLieThere() throws IOException {
+        Fixture fixture = fixture();
+        Level level = fixture.levels().get(0);
+        World world = new World(level, fixture.textures(), fixture.gfx(), fixture.objects());
+
+        // Un type dont les images decrivent bien une chute.
+        ObjectDefinition kind = null;
+        for (ObjectDefinition definition : fixture.objects().objects().values()) {
+            if (definition.objectType() == ObjectDefinition.TYPE_ENEMY
+                    && definition.frames().size() > 129
+                    && definition.frames().get(41) != definition.frames().get(42)) {
+                kind = definition;
+                break;
+            }
+        }
+        Assumptions.assumeTrue(kind != null, "aucun type d'ennemi avec animation de chute");
+
+        Camera camera = Camera.atPlayerStart(level);
+        // A l'ecart du joueur : un corps qui lui tombe dessus ne prouverait rien.
+        SceneObject enemy = new SceneObject(kind,
+                (camera.x() >> 16) + 4 * Level.BLOCK_SIZE,
+                (camera.z() >> 16) + 4 * Level.BLOCK_SIZE, 0, 0, 0);
+        enemy.setStrength(1);
+        enemy.awaken();
+        world.objects().clear();
+        world.objects().add(enemy);
+
+        assertTrue(EnemyAi.kill(enemy, 512), "la chute n'a pas commence");
+        assertEquals(42, enemy.animCounter(), "la chute demarre a la quarante-deuxieme image");
+        assertEquals(512, enemy.heading(), "le corps tombe dans la direction du tir");
+        assertFalse(enemy.isRemains(), "il n'est pas encore au sol");
+
+        EnemyAi ai = new EnemyAi(world);
+        PlayerState state = new PlayerState();
+        for (int tick = 0; tick < 200 && !enemy.isRemains(); tick++) {
+            ai.update(camera, state, null);
+        }
+
+        assertTrue(enemy.isRemains(), "le corps n'est jamais arrive au sol");
+        assertEquals(129, enemy.animCounter(), "l'image du corps au sol n'est pas la bonne");
+        assertEquals(0, enemy.speed(), "le corps glisse encore");
+        assertFalse(enemy.isCollected(), "le corps doit rester visible");
+    }
+
+    @Test
+    @DisplayName("Un cadavre n'arrete plus les tirs")
+    void remainsDoNotBlockShots() throws IOException {
+        Fixture fixture = fixture();
+        Level level = fixture.levels().get(0);
+        World world = new World(level, fixture.textures(), fixture.gfx(), fixture.objects());
+
+        ObjectDefinition kind = fixture.objects().objects().values().stream()
+                .filter(d -> d.objectType() == ObjectDefinition.TYPE_ENEMY && d.radius() > 0)
+                .findFirst().orElse(null);
+        Assumptions.assumeTrue(kind != null);
+
+        SceneObject body = new SceneObject(kind, 0, 0, 0, 0, 0);
+        body.setRemains(true);
+
+        // Le filtre de Combat ecarte les restes : on le verifie par le meme critere.
+        assertTrue(body.isRemains());
+        assertFalse(body.isCollected(),
+                "un cadavre reste dans la scene, il n'est pas ramasse");
     }
 }

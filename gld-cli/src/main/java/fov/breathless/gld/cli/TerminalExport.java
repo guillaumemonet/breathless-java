@@ -54,7 +54,16 @@ final class TerminalExport {
         fov.breathless.engine.Settings settings = new fov.breathless.engine.Settings();
         fov.breathless.engine.ConfigMenu config = new fov.breathless.engine.ConfigMenu(settings);
         config.setAccessCode(fov.breathless.engine.LevelCode.FIRST_LEVEL);
-        String[] configPages = {"reglages", "reglages-fenetre", "reglages-son", "reglages-options"};
+        // Des touches plausibles, pour que la page clavier montre autre chose que des « ? ».
+        String[][] keys = {{"avant", "UP"}, {"arriere", "DOWN"}, {"gauche", "LEFT"},
+            {"droite", "RIGHT"}, {"courir", "SHIFT"}, {"pas-de-cote", "ALT"},
+            {"tirer", "CTRL"}, {"actionner", "SPACE"}, {"carte", "TAB"},
+            {"arme-suivante", "X"}};
+        for (int i = 0; i < keys.length; i++) {
+            settings.keys().set(keys[i][0], keys[i][1], i + 1);
+        }
+        String[] configPages = {"reglages", "reglages-fenetre", "reglages-son",
+            "reglages-clavier", "reglages-options"};
         for (int i = 0; i < configPages.length; i++) {
             config.open();
             for (int step = 0; step < i; step++) {

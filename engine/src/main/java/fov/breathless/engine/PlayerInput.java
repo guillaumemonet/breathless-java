@@ -33,6 +33,16 @@ public final class PlayerInput {
      */
     public boolean action;
 
+    /**
+     * Nombre d'appuis sur la gachette depuis le dernier pas.
+     *
+     * <p>Le moteur d'origine ne compte pas le temps mais les <em>pressions</em> : chacune
+     * met un tir en file, et la file se vide d'un tir par image. Une arme ordinaire est
+     * donc au coup par coup, et tirer vite est affaire de doigt. Seul le lance-flammes
+     * lit {@link #fire}, qu'il consomme tant qu'il est tenu.
+     */
+    public int firePresses;
+
     public void clear() {
         forward = false;
         backward = false;
@@ -41,6 +51,7 @@ public final class PlayerInput {
         strafe = false;
         run = false;
         fire = false;
+        firePresses = 0;
         nextWeapon = false;
         action = false;
     }

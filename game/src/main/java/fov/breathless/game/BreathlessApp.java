@@ -55,6 +55,9 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     /** Niveaux par monde : les vingt niveaux du jeu se rangent en quatre mondes de cinq. */
     private static final int LEVELS_PER_GAME = 5;
 
+    /** Tentatives accordees au depart. {@code move.b #3,Retries(a5)}. */
+    private static final int RETRIES = 3;
+
     /** Frequence de simulation du jeu d'origine, en hertz. */
     private static final float TICK = 1f / 50f;
 
@@ -96,10 +99,20 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     /** La carte est-elle affichee ? Elle remplace la vue et suspend le jeu, comme l'original. */
     private boolean showMap;
     private boolean restored;
+    private boolean paused;
+
+    /**
+     * Tentatives restantes. {@code Retries} : trois au depart, une de moins a chaque
+     * mort, et la partie s'arrete quand il n'en reste plus.
+     */
+    private int retries = RETRIES;
 
     /** Ecran fixe affiche, ou {@code null} quand on joue. */
     private fov.breathless.gld.gfx.Picture screenPicture;
     private Screens screens;
+
+    /** Images restant a afficher avant de passer, ou 0 si l'on attend une touche. */
+    private int screenTicks;
 
     /** Ce qu'il faudra faire quand le joueur aura valide l'ecran fixe. */
     private Runnable afterScreen;
@@ -154,7 +167,10 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
                 : (saved.game() - 1) * LEVELS_PER_GAME + (saved.level() - 1);
         loadLevel(start);
         bindKeys();
-        show(Screens.TITLE, () -> introduceWorld(start));
+        // Les deux logos, puis le titre : la sequence d'ouverture de l'original.
+        show(Screens.LOGO_1, Screens.LOGO_1_TICKS,
+                () -> show(Screens.LOGO_2, Screens.LOGO_2_TICKS,
+                        () -> show(Screens.TITLE, () -> introduceWorld(start))));
     }
 
     /**
@@ -219,6 +235,32 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             }
         }
         soundPlayer.stopMusic();
+    }
+
+    /**
+     * Le joueur vient de mourir.
+     *
+     * <p>Une tentative de moins ; s'il en reste, on reprend le niveau au debut, sinon la
+     * partie s'arrete et l'on revient au titre avec trois tentatives neuves.
+     */
+    private void playerDied() {
+        retries--;
+        int retry = levelIndex;
+        if (retries > 0) {
+            System.out.println("Mort. Tentatives restantes : " + retries);
+            show(Screens.GAME_OVER, () -> {
+                loadLevel(retry);
+                introducedWorld = 0;
+            });
+            return;
+        }
+        System.out.println("Partie terminee.");
+        show(Screens.GAME_OVER, () -> show(Screens.TITLE, () -> {
+            retries = RETRIES;
+            introducedWorld = 0;
+            loadLevel(0);
+            introduceWorld(0);
+        }));
     }
 
     /** Affiche le code du niveau suivant, pour pouvoir y revenir. */
@@ -316,6 +358,15 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
      * presentation que ne pas jouer.
      */
     private void show(String name, Runnable next) {
+        show(name, 0, next);
+    }
+
+    /**
+     * Affiche un ecran fixe.
+     *
+     * @param ticks nombre d'images avant de passer tout seul, ou 0 pour attendre une touche
+     */
+    private void show(String name, int ticks, Runnable next) {
         fov.breathless.gld.gfx.Picture picture = screens.get(name);
         if (picture == null) {
             if (next != null) {
@@ -324,6 +375,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             return;
         }
         screenPicture = picture;
+        screenTicks = ticks;
         afterScreen = next;
     }
 
@@ -337,22 +389,133 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         show(Screens.world(world), null);
     }
 
+    /** Touches d'origine des commandes redefinissables. */
+    private static final Object[][] DEFAULT_KEYS = {
+        {"avant", "UP", KeyInput.KEY_UP},
+        {"arriere", "DOWN", KeyInput.KEY_DOWN},
+        {"gauche", "LEFT", KeyInput.KEY_LEFT},
+        {"droite", "RIGHT", KeyInput.KEY_RIGHT},
+        {"courir", "SHIFT", KeyInput.KEY_LSHIFT},
+        {"pas-de-cote", "ALT", KeyInput.KEY_LMENU},
+        {"tirer", "CTRL", KeyInput.KEY_LCONTROL},
+        {"actionner", "SPACE", KeyInput.KEY_SPACE},
+        {"carte", "TAB", KeyInput.KEY_TAB},
+        {"arme-suivante", "X", KeyInput.KEY_X},
+    };
+
+    /** Emplacement du fichier de reglages, a cote du jeu. */
+    private static java.nio.file.Path configFile() {
+        return java.nio.file.Path.of(Configuration.FILE);
+    }
+
+    /** Declare les touches par defaut, avant toute reprise de reglages. */
+    private void defaultKeys() {
+        for (Object[] entry : DEFAULT_KEYS) {
+            settings.keys().set((String) entry[0], (String) entry[1], (Integer) entry[2]);
+        }
+    }
+
+    /**
+     * Relie les commandes redefinissables a leurs touches.
+     *
+     * <p>Rappelee apres chaque changement : les anciennes liaisons sont defaites d'abord.
+     */
+    private void bindConfigurableKeys() {
+        for (String action : fov.breathless.engine.KeyBindings.ACTIONS) {
+            if (inputManager.hasMapping(action)) {
+                inputManager.deleteMapping(action);
+            }
+            var binding = settings.keys().get(action);
+            if (binding == null || binding.code() == 0) {
+                continue;
+            }
+            inputManager.addMapping(action, new KeyTrigger(binding.code()));
+            inputManager.addListener(this, action);
+        }
+    }
+
+    /**
+     * Ecoute les touches brutes, pour la redefinition.
+     *
+     * <p>Une commande en attente prend la prochaine touche pressee telle quelle : il faut
+     * donc l'evenement brut, et non une liaison, puisque la touche voulue n'en a pas
+     * encore.
+     */
+    private void listenForKeyCapture() {
+        inputManager.addRawInputListener(new com.jme3.input.RawInputListener() {
+            private final com.jme3.input.KeyNames names = new com.jme3.input.KeyNames();
+
+            @Override
+            public void onKeyEvent(com.jme3.input.event.KeyInputEvent event) {
+                if (!event.isPressed() || configMenu.capturing() == null) {
+                    return;
+                }
+                if (event.getKeyCode() == KeyInput.KEY_ESCAPE) {
+                    configMenu.cancelCapture();
+                    return;
+                }
+                String label = names.getName(event.getKeyCode());
+                configMenu.captureKey(label == null ? "?" : label.toUpperCase(java.util.Locale.ROOT),
+                        event.getKeyCode());
+                bindConfigurableKeys();
+            }
+
+            @Override
+            public void beginInput() {
+                // Sans objet.
+            }
+
+            @Override
+            public void endInput() {
+                // Sans objet.
+            }
+
+            @Override
+            public void onJoyAxisEvent(com.jme3.input.event.JoyAxisEvent event) {
+                // Sans objet.
+            }
+
+            @Override
+            public void onJoyButtonEvent(com.jme3.input.event.JoyButtonEvent event) {
+                // Sans objet.
+            }
+
+            @Override
+            public void onMouseMotionEvent(com.jme3.input.event.MouseMotionEvent event) {
+                // Sans objet.
+            }
+
+            @Override
+            public void onMouseButtonEvent(com.jme3.input.event.MouseButtonEvent event) {
+                // Sans objet.
+            }
+
+            @Override
+            public void onTouchEvent(com.jme3.input.event.TouchEvent event) {
+                // Sans objet.
+            }
+        });
+    }
+
     private void bindKeys() {
-        bind("avant", KeyInput.KEY_UP, KeyInput.KEY_W, KeyInput.KEY_Z);
-        bind("arriere", KeyInput.KEY_DOWN, KeyInput.KEY_S);
-        bind("gauche", KeyInput.KEY_LEFT, KeyInput.KEY_A, KeyInput.KEY_Q);
-        bind("droite", KeyInput.KEY_RIGHT, KeyInput.KEY_D);
-        bind("courir", KeyInput.KEY_LSHIFT, KeyInput.KEY_RSHIFT);
-        bind("pas-de-cote", KeyInput.KEY_LMENU, KeyInput.KEY_RMENU);
-        // L'espace est la touche d'action du jeu d'origine : ouvrir, actionner.
-        bind("tirer", KeyInput.KEY_LCONTROL, KeyInput.KEY_RCONTROL);
-        bind("actionner", KeyInput.KEY_SPACE, KeyInput.KEY_E, KeyInput.KEY_RETURN);
-        // Tabulation montre la carte, comme dans l'original, qui met alors le jeu en
-        // pause. Les armes s'y choisissent au clavier numerique, de 1 a 6.
-        bind("carte", KeyInput.KEY_TAB);
+        defaultKeys();
+        Configuration.load(configFile(), settings);
+        bindConfigurableKeys();
+        listenForKeyCapture();
+
+        // Les secondes touches, qui ne se redefinissent pas : elles doublent les
+        // premieres pour qui prefere ZQSD ou WASD.
+        bind("avant2", KeyInput.KEY_W, KeyInput.KEY_Z);
+        bind("arriere2", KeyInput.KEY_S);
+        bind("gauche2", KeyInput.KEY_A, KeyInput.KEY_Q);
+        bind("droite2", KeyInput.KEY_D);
+        bind("courir2", KeyInput.KEY_RSHIFT);
+        bind("pas-de-cote2", KeyInput.KEY_RMENU);
+        bind("tirer2", KeyInput.KEY_RCONTROL);
+        bind("actionner2", KeyInput.KEY_E, KeyInput.KEY_RETURN);
         // Echap ouvre le menu de configuration, qui porte la commande de sortie.
         bind("menu", KeyInput.KEY_ESCAPE);
-        bind("arme-suivante", KeyInput.KEY_X);
+        bind("pause", KeyInput.KEY_P);
         // Reglages d'affichage, comme dans l'original : +/- la taille, le pave la grosseur.
         bind("fenetre-plus", KeyInput.KEY_ADD, KeyInput.KEY_EQUALS);
         bind("fenetre-moins", KeyInput.KEY_SUBTRACT, KeyInput.KEY_MINUS);
@@ -369,10 +532,10 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             bind("arme-" + weapon, weaponKeys[weapon]);
         }
 
-        List<String> names = new ArrayList<>(List.of("avant", "arriere", "gauche", "droite",
-                "courir", "pas-de-cote", "tirer", "actionner", "carte", "menu",
-                "arme-suivante",
-                "niveau-suivant", "niveau-precedent",
+        List<String> names = new ArrayList<>(List.of(
+                "avant2", "arriere2", "gauche2", "droite2", "courir2", "pas-de-cote2",
+                "tirer2", "actionner2",
+                "menu", "pause", "niveau-suivant", "niveau-precedent",
                 "fenetre-plus", "fenetre-moins",
                 "pixel-11", "pixel-21", "pixel-12", "pixel-22"));
         for (int weapon = 0; weapon < weaponKeys.length; weapon++) {
@@ -392,7 +555,10 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     }
 
     @Override
-    public void onAction(String name, boolean pressed, float tpf) {
+    public void onAction(String action, boolean pressed, float tpf) {
+        // Les touches secondaires portent le meme nom suffixe de « 2 ».
+        String name = action.endsWith("2") && !action.startsWith("pixel-")
+                ? action.substring(0, action.length() - 1) : action;
         switch (name) {
             case "avant" -> {
                 if (pressed && (routeToMenu("avant") || routeToTerminal("avant"))) {
@@ -420,7 +586,14 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             }
             case "courir" -> input.run = pressed;
             case "pas-de-cote" -> input.strafe = pressed;
-            case "tirer" -> input.fire = pressed;
+            case "tirer" -> {
+                input.fire = pressed;
+                if (pressed) {
+                    // C'est la pression qui compte, pas la duree : une arme ordinaire
+                    // tire une fois par appui.
+                    input.firePresses++;
+                }
+            }
             case "actionner" -> {
                 if (pressed) {
                     if (dismissScreen() || routeToMenu("actionner")
@@ -438,6 +611,12 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             case "carte" -> {
                 if (pressed) {
                     showMap = !showMap;
+                }
+            }
+            case "pause" -> {
+                if (pressed) {
+                    paused = !paused;
+                    System.out.println(paused ? "Pause." : "Reprise.");
                 }
             }
             case "menu" -> {
@@ -501,6 +680,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             return false;
         }
         screenPicture = null;
+        screenTicks = 0;
         Runnable next = afterScreen;
         afterScreen = null;
         if (next != null) {
@@ -517,6 +697,9 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     private boolean routeToMenu(String action) {
         if (!configMenu.isOpen()) {
             return false;
+        }
+        if (configMenu.capturing() != null) {
+            return true;   // on attend une touche, pas une commande
         }
         switch (action) {
             case "avant" -> configMenu.up();
@@ -565,6 +748,10 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     public void simpleUpdate(float tpf) {
         if (screenPicture != null) {
             accumulator = 0;
+            if (screenTicks > 0 && --screenTicks == 0) {
+                dismissScreen();
+                return;
+            }
             Screens.draw(screenPicture, screenPixels, WIDTH, screenHeight);
             PixelUpload.fill(pixels, screenPixels, WIDTH, screenHeight,
                     screenPicture.palette());
@@ -586,6 +773,14 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
                     world.palette(false));
             image.setUpdateNeeded();
             applySettings();
+            if (configMenu.takeSaveRequest()) {
+                Configuration.save(configFile(), settings);
+            }
+            return;
+        }
+
+        if (configMenu.takeCreditsRequest()) {
+            show(Screens.CREDITS, null);
             return;
         }
 
@@ -602,26 +797,38 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             accumulator = 0;
             simulation.autoMap().render(mapPixels, WIDTH, VIEW_HEIGHT, camera);
             System.arraycopy(mapPixels, 0, screenPixels, 0, WIDTH * VIEW_HEIGHT);
+        } else if (paused) {
+            accumulator = 0;
+            Framebuffer frame = renderer.render(camera);
+            blitView(frame);
+            if (settings.sight()) {
+                Crosshair.draw(screenPixels, WIDTH, VIEW_HEIGHT);
+            }
         } else {
             accumulator += Math.min(tpf, MAX_CATCH_UP);
             while (accumulator >= TICK) {
                 simulation.tick(input);
                 accumulator -= TICK;
                 if (simulation.state().isDead()) {
-                    // Mort du joueur : la banniere, puis on reprend le niveau au debut.
-                    int retry = levelIndex;
-                    show(Screens.GAME_OVER, () -> {
-                        loadLevel(retry);
-                        introducedWorld = 0;
-                    });
                     accumulator = 0;
+                    playerDied();
                     break;
                 }
                 if (simulation.takeLevelFinished()) {
                     announceCode();
                     int next = levelIndex + 1;
-                    loadLevel(next);
                     accumulator = 0;
+                    if (next >= data.levels().size()) {
+                        // Le dernier niveau est fini : l'ecran de fin, puis le titre.
+                        show(Screens.END, () -> show(Screens.TITLE, () -> {
+                            retries = RETRIES;
+                            introducedWorld = 0;
+                            loadLevel(0);
+                            introduceWorld(0);
+                        }));
+                        break;
+                    }
+                    loadLevel(next);
                     introduceWorld(next);
                     break;
                 }

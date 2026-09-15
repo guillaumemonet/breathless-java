@@ -21,7 +21,7 @@ package fov.breathless.engine;
 public final class ConfigMenu {
 
     /** Les pages du menu. */
-    public enum Page { MAIN, WINDOW, SOUND, OPTIONS }
+    public enum Page { MAIN, WINDOW, SOUND, KEYBOARD, OPTIONS }
 
     /** Les valeurs qu'une ligne de choix fait defiler. */
     private static final String[] ON_OFF = {"OFF", "_ON"};
@@ -36,7 +36,7 @@ public final class ConfigMenu {
     private static final String[] MUSIC_VOLUMES = {"1", "2", "3", "4"};
 
     /** Ce qu'une ligne fait quand on la valide. */
-    private enum Kind { GO, CLOSE, QUIT, CYCLE, SHOW }
+    private enum Kind { GO, CLOSE, QUIT, CYCLE, SHOW, CREDITS, SAVE, KEY }
 
     /**
      * Une ligne du menu.
@@ -58,8 +58,9 @@ public final class ConfigMenu {
         new Line("RETURN TO GAME", 24, Kind.CLOSE, null, null),
         new Line("WINDOW", 34, Kind.GO, Page.WINDOW, null),
         new Line("SOUND", 44, Kind.GO, Page.SOUND, null),
-        new Line("GAME OPTIONS", 54, Kind.GO, Page.OPTIONS, null),
-        new Line("QUIT GAME", 64, Kind.QUIT, null, null),
+        new Line("KEYBOARD", 54, Kind.GO, Page.KEYBOARD, null),
+        new Line("GAME OPTIONS", 64, Kind.GO, Page.OPTIONS, null),
+        new Line("QUIT GAME", 74, Kind.QUIT, null, null),
     };
 
     private static final Line[] WINDOW_LINES = {
@@ -76,14 +77,33 @@ public final class ConfigMenu {
         new Line("MAIN PAGE", 74, Kind.GO, Page.MAIN, null),
     };
 
+    /** Une ligne par commande redefinissable, plus le retour. */
+    private static final Line[] KEY_LINES = keyLines();
+
+    private static Line[] keyLines() {
+        Line[] lines = new Line[KeyBindings.ACTIONS.length + 1];
+        for (int i = 0; i < KeyBindings.ACTIONS.length; i++) {
+            lines[i] = new Line(KeyBindings.ACTIONS[i], 24 + i * 8, Kind.KEY, null, null);
+        }
+        lines[lines.length - 1] = new Line("MAIN PAGE", 112, Kind.GO, Page.MAIN, null);
+        return lines;
+    }
+
     private static final Line[] OPTION_LINES = {
         new Line("ACCESS CODE", 34, Kind.SHOW, null, null),
+        new Line("SAVE CONFIG", 54, Kind.SAVE, null, null),
+        new Line("CREDITS", 64, Kind.CREDITS, null, null),
         new Line("MAIN PAGE", 74, Kind.GO, Page.MAIN, null),
     };
 
     private final Settings settings;
     private boolean open;
     private boolean quitting;
+    private boolean creditsRequested;
+
+    /** Commande dont on attend la nouvelle touche, ou {@code null}. */
+    private String capturing;
+    private boolean saveRequested;
     private Page page = Page.MAIN;
     private int selection;
     private String accessCode = "";
@@ -94,6 +114,64 @@ public final class ConfigMenu {
 
     public boolean isOpen() {
         return open;
+    }
+
+    /**
+     * La commande dont le menu attend une touche, ou {@code null}.
+     *
+     * <p>Tant qu'elle n'est pas nulle, la couche graphique doit lui donner la prochaine
+     * touche pressee plutot que de l'interpreter.
+     */
+    public String capturing() {
+        return capturing;
+    }
+
+    /**
+     * Affecte une touche a la commande en attente.
+     *
+     * <p>Si une autre commande employait deja cette touche, elle la perd : deux commandes
+     * sur la meme touche rendraient le jeu injouable.
+     *
+     * @param label nom de la touche, tel qu'il s'affiche
+     * @param code  code opaque de la couche graphique
+     * @return la commande affectee, ou {@code null} si l'on n'attendait rien
+     */
+    public String captureKey(String label, int code) {
+        String action = capturing;
+        if (action == null) {
+            return null;
+        }
+        capturing = null;
+        String previous = settings.keys().userOf(code, action);
+        if (previous != null) {
+            settings.keys().set(previous, "-", 0);
+        }
+        settings.keys().set(action, label, code);
+        settings.touch();
+        return action;
+    }
+
+    /** Abandonne l'attente d'une touche. */
+    public void cancelCapture() {
+        capturing = null;
+    }
+
+    /**
+     * Le joueur a-t-il demande les credits ?
+     *
+     * <p>L'appel efface la demande : elle ne vaut qu'une fois.
+     */
+    public boolean takeCreditsRequest() {
+        boolean wanted = creditsRequested;
+        creditsRequested = false;
+        return wanted;
+    }
+
+    /** Le joueur a-t-il demande d'enregistrer la configuration ? L'appel efface la demande. */
+    public boolean takeSaveRequest() {
+        boolean wanted = saveRequested;
+        saveRequested = false;
+        return wanted;
     }
 
     /** Le joueur a-t-il demande a quitter ? */
@@ -121,6 +199,9 @@ public final class ConfigMenu {
     public void open() {
         open = true;
         quitting = false;
+        creditsRequested = false;
+        saveRequested = false;
+        capturing = null;
         page = Page.MAIN;
         selection = 0;
     }
@@ -160,6 +241,12 @@ public final class ConfigMenu {
                 close();
             }
             case CYCLE -> cycle(line, +1);
+            case CREDITS -> {
+                creditsRequested = true;
+                close();
+            }
+            case SAVE -> saveRequested = true;
+            case KEY -> capturing = line.label();
             default -> {
                 // Une ligne d'affichage ne fait rien.
             }
@@ -212,6 +299,7 @@ public final class ConfigMenu {
             case MAIN -> MAIN_LINES;
             case WINDOW -> WINDOW_LINES;
             case SOUND -> SOUND_LINES;
+            case KEYBOARD -> KEY_LINES;
             case OPTIONS -> OPTION_LINES;
         };
     }
@@ -219,6 +307,9 @@ public final class ConfigMenu {
     /** Texte de la ligne d'index donne, valeur comprise. Pour les tests. */
     public String line(int index) {
         Line line = lines()[index];
+        if (line.kind() == Kind.KEY) {
+            return KeyBindings.title(line.label()) + " " + settings.keys().label(line.label());
+        }
         if (line.kind() == Kind.CYCLE) {
             return line.label() + " " + line.values()[valueOf(line)];
         }
@@ -235,6 +326,7 @@ public final class ConfigMenu {
         String title = switch (page) {
             case WINDOW -> "WINDOW CONFIGURATION";
             case SOUND -> "SOUND CONFIGURATION";
+            case KEYBOARD -> "KEYBOARD";
             case OPTIONS -> "GAME OPTIONS";
             default -> "CONFIGURATION MENU";
         };
@@ -245,9 +337,15 @@ public final class ConfigMenu {
         for (int i = 0; i < lines.length; i++) {
             Line line = lines[i];
             int colour = (i == selection) ? Monitor.COLOUR_SELECTED : Monitor.COLOUR_TEXT;
-            Monitor.print(target, width, height, LABEL_X, line.y(), line.label(), colour);
+            String label = (line.kind() == Kind.KEY)
+                    ? KeyBindings.title(line.label()) : line.label();
+            Monitor.print(target, width, height, LABEL_X, line.y(), label, colour);
 
-            if (line.kind() == Kind.CYCLE) {
+            if (line.kind() == Kind.KEY) {
+                String value = line.label().equals(capturing)
+                        ? "?" : settings.keys().label(line.label());
+                Monitor.print(target, width, height, VALUE_X, line.y(), value, colour);
+            } else if (line.kind() == Kind.CYCLE) {
                 Monitor.print(target, width, height, VALUE_X, line.y(),
                         line.values()[valueOf(line)], colour);
             } else if (line.kind() == Kind.SHOW && !accessCode.isEmpty()) {

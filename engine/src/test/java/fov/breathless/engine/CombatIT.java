@@ -121,6 +121,7 @@ class CombatIT {
 
         PlayerInput input = new PlayerInput();
         input.fire = true;
+        input.firePresses = 1;
         simulation.tick(input);
 
         assertEquals(energy - cost, simulation.state().energy(), "l'energie n'a pas ete debitee");
@@ -130,20 +131,30 @@ class CombatIT {
     }
 
     @Test
-    @DisplayName("La cadence de tir est bridee : maintenir la gachette ne mitraille pas")
-    void fireRateIsLimited() throws IOException {
+    @DisplayName("Une arme ordinaire tire au coup par coup : tenir la gachette ne suffit pas")
+    void ordinaryWeaponsFireOncePerPress() throws IOException {
         Simulation simulation = simulation(fixture());
         PlayerInput input = new PlayerInput();
+
+        // Un appui : un tir.
         input.fire = true;
-
+        input.firePresses = 1;
+        input.firePresses = 1;
         simulation.tick(input);
-        int energy = simulation.state().energy();
+        int afterOne = simulation.state().energy();
+        assertTrue(afterOne < PlayerState.MAX_ENERGY, "le premier appui n'a pas tire");
 
-        // Les pas suivants ne doivent rien couter tant que l'arme se recharge.
-        for (int tick = 0; tick < 4; tick++) {
+        // La gachette reste tenue, mais sans nouvel appui : plus rien ne part.
+        for (int tick = 0; tick < 20; tick++) {
             simulation.tick(input);
         }
-        assertEquals(energy, simulation.state().energy(), "l'arme a tire trop vite");
+        assertEquals(afterOne, simulation.state().energy(),
+                "tenir la gachette a continue de tirer");
+
+        // Un second appui, un second tir.
+        input.firePresses = 1;
+        simulation.tick(input);
+        assertTrue(simulation.state().energy() < afterOne, "le second appui n'a pas tire");
     }
 
     @Test
@@ -154,6 +165,7 @@ class CombatIT {
 
         PlayerInput input = new PlayerInput();
         input.fire = true;
+        input.firePresses = 1;
         simulation.tick(input);
 
         assertTrue(simulation.world().projectiles().isEmpty(), "un tir est parti sans energie");
@@ -173,6 +185,8 @@ class CombatIT {
                 camera.setHeading(turn);
                 PlayerInput input = new PlayerInput();
                 input.fire = true;
+                input.firePresses = 1;
+        input.firePresses = 1;
                 simulation.tick(input);
                 input.fire = false;
 
@@ -255,6 +269,7 @@ class CombatIT {
         int playerBlock = level.blockIndex(camera.cellX(), camera.cellZ());
         PlayerInput input = new PlayerInput();
         input.fire = true;
+        input.firePresses = 1;
         combat.update(camera, input, playerBlock);
         input.fire = false;
         for (int tick = 0; tick < 200 && !world.projectiles().isEmpty(); tick++) {
@@ -287,6 +302,7 @@ class CombatIT {
         Combat simple = new Combat(world, weapons, plain, fixture.objects());
         PlayerInput input = new PlayerInput();
         input.fire = true;
+        input.firePresses = 1;
         simple.update(camera, input, level.blockIndex(camera.cellX(), camera.cellZ()));
         int shots = world.projectiles().size();
         int spent = PlayerState.MAX_ENERGY - plain.energy();
@@ -297,6 +313,7 @@ class CombatIT {
 
         PlayerState boosted = new PlayerState();
         Combat doubled = new Combat(world, weapons, boosted, fixture.objects());
+        input.firePresses = 1;   // la premiere pression a deja ete consommee
         doubled.update(camera, input, level.blockIndex(camera.cellX(), camera.cellZ()));
 
         assertEquals(shots * 2, world.projectiles().size(),
@@ -375,13 +392,14 @@ class CombatIT {
         int playerBlock = level.blockIndex(camera.cellX(), camera.cellZ());
         PlayerInput input = new PlayerInput();
         input.fire = true;
+        input.firePresses = 1;
         combat.update(camera, input, playerBlock);
         input.fire = false;
         for (int tick = 0; tick < 200 && !world.projectiles().isEmpty(); tick++) {
             combat.update(camera, input, playerBlock);
         }
 
-        assertTrue(target.isCollected(), "l'ennemi n'a pas ete abattu");
+        assertTrue(target.strength() <= 0, "l'ennemi n'a pas ete abattu");
         assertEquals(kind.param(2), state.score(),
                 "le score credite ne correspond pas au bareme du type " + kind.name());
     }

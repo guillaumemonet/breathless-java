@@ -15,11 +15,22 @@ public final class Settings {
     public static final int MAX_MUSIC_VOLUME = 4;
 
     private final ViewSize viewSize = new ViewSize();
+    private final KeyBindings keys = new KeyBindings();
     private boolean sight = true;
     private boolean music = true;
     private boolean sound = true;
     private int musicVolume = 3;
     private int revision;
+
+    /** Les touches du jeu. */
+    public KeyBindings keys() {
+        return keys;
+    }
+
+    /** Signale un changement que le compteur de revisions ne verrait pas seul. */
+    public void touch() {
+        revision++;
+    }
 
     /** Taille de la fenetre et grosseur des pixels. */
     public ViewSize viewSize() {

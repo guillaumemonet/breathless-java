@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Le menu de configuration et les reglages qu'il porte. */
@@ -109,7 +110,7 @@ class ConfigMenuTest {
         ConfigMenu menu = menu(settings);
         menu.setAccessCode(LevelCode.FIRST_LEVEL);
 
-        choose(menu, 3);                                 // GAME OPTIONS
+        choose(menu, 4);                                 // GAME OPTIONS
         assertEquals(ConfigMenu.Page.OPTIONS, menu.page());
         assertTrue(menu.line(0).contains(LevelCode.FIRST_LEVEL),
                 "le code n'apparait pas : " + menu.line(0));
@@ -124,7 +125,7 @@ class ConfigMenuTest {
     void quittingAndGoingBack() {
         Settings settings = new Settings();
 
-        for (int page = 1; page <= 3; page++) {
+        for (int page = 1; page <= 4; page++) {
             ConfigMenu menu = menu(settings);
             choose(menu, page);
             assertTrue(menu.page() != ConfigMenu.Page.MAIN);
@@ -133,7 +134,7 @@ class ConfigMenuTest {
         }
 
         ConfigMenu menu = menu(settings);
-        choose(menu, 4);                                 // QUIT GAME
+        choose(menu, 5);                                 // QUIT GAME
         assertTrue(menu.isQuitting());
         assertFalse(menu.isOpen());
     }
@@ -170,5 +171,61 @@ class ConfigMenuTest {
 
         settings.setSight(!settings.sight());
         assertTrue(settings.revision() != revision, "le changement n'est pas signale");
+    }
+
+    @Test
+    @DisplayName("Une touche se redefinit, et l'ancienne commande la perd")
+    void keysCanBeReassigned() {
+        Settings settings = new Settings();
+        settings.keys().set("avant", "UP", 200);
+        settings.keys().set("arriere", "DOWN", 208);
+        ConfigMenu menu = menu(settings);
+
+        choose(menu, 3);                                 // KEYBOARD
+        assertEquals(ConfigMenu.Page.KEYBOARD, menu.page());
+
+        // Choisir une commande met le menu en attente d'une touche.
+        choose(menu, 0);
+        assertEquals("avant", menu.capturing());
+
+        // La touche de « arriere » est reprise : celle-ci la perd.
+        assertEquals("avant", menu.captureKey("DOWN", 208));
+        assertNull(menu.capturing());
+        assertEquals(208, settings.keys().get("avant").code());
+        assertEquals(0, settings.keys().get("arriere").code(),
+                "l'ancienne commande garde une touche prise par une autre");
+    }
+
+    @Test
+    @DisplayName("L'attente d'une touche peut etre abandonnee")
+    void captureCanBeCancelled() {
+        Settings settings = new Settings();
+        settings.keys().set("avant", "UP", 200);
+        ConfigMenu menu = menu(settings);
+
+        choose(menu, 3);
+        choose(menu, 0);
+        assertEquals("avant", menu.capturing());
+
+        menu.cancelCapture();
+        assertNull(menu.capturing());
+        assertEquals(200, settings.keys().get("avant").code(), "la touche n'a pas bouge");
+        assertNull(menu.captureKey("A", 30), "sans attente, rien n'est affecte");
+    }
+
+    @Test
+    @DisplayName("La page des options sait enregistrer et montrer les credits")
+    void theOptionsPageRequestsSaveAndCredits() {
+        ConfigMenu menu = menu(new Settings());
+        choose(menu, 4);                                 // GAME OPTIONS
+
+        assertFalse(menu.takeSaveRequest(), "rien n'a ete demande");
+        choose(menu, 1);                                 // SAVE CONFIG
+        assertTrue(menu.takeSaveRequest(), "l'enregistrement n'est pas demande");
+        assertFalse(menu.takeSaveRequest(), "la demande se repete");
+
+        choose(menu, 2);                                 // CREDITS
+        assertTrue(menu.takeCreditsRequest(), "les credits ne sont pas demandes");
+        assertFalse(menu.isOpen(), "montrer les credits ferme le menu");
     }
 }

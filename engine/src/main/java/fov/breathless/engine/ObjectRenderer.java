@@ -298,7 +298,11 @@ public final class ObjectRenderer {
         List<ObjectFrame> frames = definition.frames();
 
         int index;
-        if (definition.isDirectional()) {
+        if (definition.isDirectional() && object.status() < 0) {
+            // DOAnimDirezionale : un statut negatif — l'ennemi tire, tombe, ou gît —
+            // designe l'image par son index absolu, sans passer par l'octant.
+            index = object.animCounter();
+        } else if (definition.isDirectional()) {
             int objectOctant = ((object.heading() + 128) >> 8) & 7;
             int cameraOctant = ((camera.heading() + 128) >> 8) & 7;
             index = (((objectOctant + 6 - cameraOctant) & 7) << 4) + object.animCounter();

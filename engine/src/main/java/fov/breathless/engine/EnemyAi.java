@@ -56,6 +56,19 @@ public final class EnemyAi {
 
     // Etats, tels que numerotes par la table de repartition d'origine.
     private static final int DEAD = -3;
+
+    /** Premiere et derniere image de la chute. {@code CEDcaduta}. */
+    private static final int FALL_FIRST_FRAME = 42;
+    private static final int FALL_LAST_FRAME = 44;
+
+    /** Duree d'une image de chute, en pas. */
+    private static final int FALL_FRAME_TICKS = 8;
+
+    /** Vitesse a laquelle le corps glisse dans la direction du tir. */
+    private static final int FALL_SPEED = 5;
+
+    /** Image du corps au sol, une fois la chute finie. */
+    private static final int REMAINS_FRAME = 129;
     private static final int FIRING = -1;
     private static final int SEEK = 0;
     private static final int WANDER = 1;
@@ -96,7 +109,16 @@ public final class EnemyAi {
         for (int i = 0; i < objects.size(); i++) {
             SceneObject enemy = objects.get(i);
             if (enemy.definition().objectType() != ObjectDefinition.TYPE_ENEMY
-                    || enemy.isDormant() || enemy.isCollected()) {
+                    || enemy.isCollected() || enemy.isRemains()) {
+                continue;
+            }
+            if (enemy.status() == DEAD) {
+                // Un corps continue sur sa lancee le temps de s'abattre.
+                move(enemy, playerX, playerZ);
+                fall(enemy);
+                continue;
+            }
+            if (enemy.isDormant()) {
                 continue;
             }
             step(enemy, playerX, playerZ, state, combat);
@@ -276,16 +298,28 @@ public final class EnemyAi {
         int x = enemy.x() + ((COS[direction] * speed) >> 8);
         int z = enemy.z() + ((SIN[direction] * speed) >> 8);
 
+        // Un corps qui tombe ne decide plus rien : il s'arrete ou il bute.
+        // {@code MNnewdir} : au-dessous de -3, l'original ne change pas la direction.
+        boolean dying = enemy.status() <= DEAD;
+
         // Collision avec le joueur : l'ennemi lui reste dessus.
         int dx = playerX - x;
         int dz = playerZ - z;
         int radius = enemy.definition().radius();
         if (dx * dx + dz * dz <= radius * radius + 2 * Player.WIDTH * Player.WIDTH) {
-            enemy.setStatus(CLINGING);
+            if (!dying) {
+                enemy.setStatus(CLINGING);
+            } else {
+                enemy.setSpeed(0);
+            }
             return;
         }
 
         if (!canStand(enemy, x, z)) {
+            if (dying) {
+                enemy.setSpeed(0);
+                return;
+            }
             // Mur, marche trop haute ou plafond trop bas : demi-tour de decision.
             enemy.setStatus(enemy.status() == SEEK ? SEEK_AFTER_WALL : WANDER_AFTER_WALL);
             return;
@@ -335,7 +369,66 @@ public final class EnemyAi {
     }
 
     /** Un ennemi abattu bascule dans son animation de chute. */
-    public static void kill(SceneObject enemy) {
+    /**
+     * Abat un ennemi.
+     *
+     * <p>{@code DestroyEnemy} : si son type decrit une animation de chute — les images 42
+     * a 44 — il tombe dans la direction du tir avant de rester au sol. Sinon il disparait
+     * sur-le-champ, et c'est a l'appelant de poser l'explosion.
+     *
+     * @param heading direction du tir, qui devient celle de la chute
+     * @return {@code true} si une chute a commence
+     */
+    public static boolean kill(SceneObject enemy, int heading) {
         enemy.setStatus(DEAD);
+        if (!hasFallAnimation(enemy)) {
+            return false;
+        }
+        enemy.setAnimCounter(FALL_FIRST_FRAME);
+        enemy.setCont1(FALL_FRAME_TICKS);
+        enemy.setHeading(heading);
+        enemy.setSpeed(FALL_SPEED);
+        return true;
+    }
+
+    /**
+     * Le type decrit-il une chute ?
+     *
+     * <p>L'original compare la derniere image de tir a la premiere de chute : si les deux
+     * pointent au meme endroit, il n'y a pas d'animation.
+     */
+    private static boolean hasFallAnimation(SceneObject enemy) {
+        var frames = enemy.definition().frames();
+        if (frames.size() <= FALL_FIRST_FRAME) {
+            return false;
+        }
+        return frames.get(FALL_FIRST_FRAME - 1) != frames.get(FALL_FIRST_FRAME);
+    }
+
+    /**
+     * Fait avancer la chute d'un ennemi abattu.
+     *
+     * <p>{@code CEDcaduta} : une image toutes les huit images, jusqu'a la quarante-quatrieme
+     * ou jusqu'a ce que l'image ne change plus. Ensuite le corps prend l'image 129 et
+     * devient un simple decor.
+     */
+    private void fall(SceneObject enemy) {
+        enemy.setCont1(enemy.cont1() - 1);
+        if (enemy.cont1() > 0) {
+            return;
+        }
+        var frames = enemy.definition().frames();
+        int next = enemy.animCounter() + 1;
+        boolean finished = enemy.animCounter() >= FALL_LAST_FRAME
+                || next >= frames.size()
+                || frames.get(enemy.animCounter()) == frames.get(next);
+        if (finished) {
+            enemy.setAnimCounter(REMAINS_FRAME);
+            enemy.setSpeed(0);
+            enemy.setRemains(true);
+            return;
+        }
+        enemy.setAnimCounter(next);
+        enemy.setCont1(FALL_FRAME_TICKS);
     }
 }

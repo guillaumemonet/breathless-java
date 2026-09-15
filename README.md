@@ -164,6 +164,7 @@ gradle :game:run --args="<chemin vers les .GLD>"
 | + / − | agrandir ou réduire la fenêtre de jeu |
 | Pavé 7 8 9 0 | grosseur des pixels : 1×1, 2×1, 1×2, 2×2 |
 | Page préc. / suiv. | changer de niveau |
+| P | pause |
 | Échap | menu de configuration — il porte la commande de sortie |
 
 La simulation tourne à **pas fixe, 50 Hz** — la fréquence PAL pour laquelle les constantes
@@ -295,9 +296,16 @@ pages. Quatre pages : l'accueil, la fenêtre (taille, grosseur des pixels, viseu
 partie en cours. Les flèches déplacent le choix, gauche et droite font défiler une valeur,
 Espace valide.
 
-Deux pages de l'original ne sont pas portées : le réglage des touches et celui des
-contrôles, qui supposent une saisie de touche que ce portage n'offre pas — ses touches sont
-fixes. Le filtre audio non plus : c'est un filtre passe-bas du matériel Amiga, sans
+La page **clavier** redéfinit les dix commandes : choisir une ligne met le menu en attente,
+la touche suivante est affectée, et la commande qui l'employait la perd. Échap abandonne.
+
+![Redéfinition des touches](docs/images/clavier.png)
+
+La page **options** montre le code de la partie, enregistre les réglages dans
+`breathless.config` — repris au lancement suivant — et donne accès à l'écran des crédits.
+
+Une page de l'original n'est pas portée, celle des contrôles : elle règle la souris, que ce
+portage n'emploie pas. Le filtre audio non plus : c'est un passe-bas du matériel Amiga, sans
 équivalent ici.
 
 ### Le terminal
@@ -317,6 +325,22 @@ L'original dessine ce menu avec des sprites matériels, sur un moniteur de 128×
 haut à gauche, en deux couleurs sur fond transparent. Les textes, leurs positions et les
 prix sont ceux d'origine ; le fond est ici opaque, faute de quoi le texte se perd dans le
 décor, et les teintes exactes des sprites ne se déduisent pas de la source.
+
+### Le combat
+
+Le tir se compte en **pressions**, pas en temps : chaque appui met un tir en file, la file
+se vide d'un tir par image, et il n'y a pas d'autre délai de rechargement. Toutes les armes
+sont donc au coup par coup — sauf le lance-flammes, seul à porter le bit qui le rend
+continu. Aucune arme n'a l'autofire dans les données, et le code qui l'aurait géré est
+commenté dans l'original.
+
+Un ennemi abattu **tombe** dans la direction du tir, sur trois images de huit pas chacune,
+puis reste au sol : il n'est plus un ennemi, ne bouge plus et n'arrête plus les tirs. Les
+types sans animation de chute explosent sur place. Un statut négatif — l'ennemi tire, tombe,
+ou gît — fait prendre son image à l'index absolu, sans passer par l'octant de direction.
+
+Trois tentatives, comme dans l'original : la mort en consomme une et relance le niveau ;
+à court, la partie s'arrête et l'on revient au titre.
 
 ### Les objets
 
@@ -366,9 +390,6 @@ d'être signalés parce qu'ils surprennent :
 - **Entre deux cibles à portée, c'est la plus proche qui encaisse.** L'original prend la
   première de sa liste de case, c'est-à-dire un ordre de placement — deux ennemis côte à
   côte se volaient alors les coups.
-- **La cadence de tir est fixe** (huit cinquantièmes). L'original compte les pressions sur
-  la gâchette, avec un mode automatique par arme.
-- **Un ennemi abattu disparaît** au lieu de laisser des restes : l'original en laisse.
 - **Le moniteur du terminal et des menus a un fond opaque**, là où l'original emploie des
   sprites transparents, et ses teintes exactes ne se déduisent pas de la source.
 - **Le réglage des touches et des contrôles** n'est pas porté : les touches sont fixes.
@@ -412,6 +433,9 @@ d'être signalés parce qu'ils surprennent :
 - [x] **Menu de configuration** — fenêtre, son, viseur, code de la partie
 - [x] **Jalon 4 : finitions** — audio, musique, codes de niveau, viseur, réglages
       d'affichage, écrans fixes et menu
+- [x] **Tenue du jeu** — trois tentatives, pause, cadence de tir au coup par coup, chute
+      des ennemis, barème de points, séquence complète des écrans, redéfinition des
+      touches et sauvegarde des réglages
 
 ## Origine et droits
 

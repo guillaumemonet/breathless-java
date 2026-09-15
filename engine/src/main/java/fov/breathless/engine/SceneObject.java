@@ -19,6 +19,7 @@ public final class SceneObject {
     private final int dormantTrigger;
     private boolean dormant;
     private boolean collected;
+    private boolean remains;
     private boolean selfAnimated;
     private int strength;
     private int status;
@@ -81,6 +82,20 @@ public final class SceneObject {
     /** Fait entrer l'objet en scene. */
     public void awaken() {
         dormant = false;
+    }
+
+    /**
+     * L'objet n'est plus qu'un cadavre.
+     *
+     * <p>{@code CEDcadutaend} change son type en 10 : il n'est plus un ennemi, ne bouge
+     * plus, n'attaque plus et n'arrete plus les tirs — il reste seulement visible.
+     */
+    public boolean isRemains() {
+        return remains;
+    }
+
+    public void setRemains(boolean value) {
+        this.remains = value;
     }
 
     /** L'objet a ete ramasse et ne doit plus etre ni dessine ni teste. */

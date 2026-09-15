@@ -18,15 +18,6 @@ import java.util.List;
  */
 public final class Combat {
 
-    /**
-     * Delai entre deux tirs, en cinquantiemes de seconde.
-     *
-     * <p><strong>Approximation</strong> : le moteur d'origine compte les pressions sur la
-     * gachette dans une variable {@code Fire} alimentee par la gestion clavier, avec un
-     * mode automatique par arme. Cette cadence fixe en tient lieu en attendant.
-     */
-    private static final int RELOAD_TICKS = 8;
-
     /** Hauteur du canon au-dessus du sol, a defaut d'indication de l'arme. */
     private static final int DEFAULT_MUZZLE_HEIGHT = 32;
 
@@ -34,7 +25,14 @@ public final class Combat {
     private final Weapons weapons;
     private final PlayerState state;
     private final java.util.Map<Integer, ObjectDefinition> shotsByWeapon = new java.util.HashMap<>();
-    private int reload;
+    /**
+     * Tirs en attente de partir. {@code Fire} dans Objects.asm.
+     *
+     * <p>Chaque pression sur la gachette en met un en file ; le lance-flammes, lui, en met
+     * un par image tant qu'on le tient. La file se vide d'un tir par image : il n'y a pas
+     * d'autre delai de rechargement que celui-la.
+     */
+    private int pending;
     private SoundPlayer sound = SoundPlayer.SILENT;
 
     /** Branche le son. Sans cela les tirs partent en silence. */
@@ -75,17 +73,41 @@ public final class Combat {
             input.nextWeapon = false;
         }
 
-        if (reload > 0) {
-            reload--;
-        }
-        if (input.fire && reload == 0 && !state.isDead()) {
-            if (pullTrigger(camera, playerBlock)) {
-                reload = RELOAD_TICKS;
+        boolean flamethrower = weapons.isFlamethrower();
+        if (flamethrower) {
+            // Le lance-flammes met un tir en file par image tant qu'il est tenu.
+            input.firePresses = 0;
+            if (input.fire) {
+                pending++;
+            } else if (pending <= 0) {
+                stopFlame();
             }
+        } else {
+            pending += input.firePresses;
+            input.firePresses = 0;
+        }
+
+        if (pending > 0 && !state.isDead()) {
+            pending--;
+            pullTrigger(camera, playerBlock);
+        } else if (state.isDead()) {
+            pending = 0;
         }
 
         advanceProjectiles(camera);
         advanceExplosions();
+    }
+
+    /** Arrete le bruit du lance-flammes, qui boucle tant qu'il crache. */
+    private void stopFlame() {
+        ObjectDefinition shot = weapons.projectile();
+        if (shot == null) {
+            return;
+        }
+        String name = soundOf(shot, 0);
+        if (name != null) {
+            sound.stop(name);
+        }
     }
 
     /** Amplitude de l'oscillation du lance-flammes, en pas d'angle. {@code PFflame}. */
@@ -276,10 +298,12 @@ public final class Combat {
                 if (death != null) {
                     sound.play(death);
                 }
-                EnemyAi.kill(nearest);
-                // Abattu : il quitte la scene. Le moteur d'origine laisse a la place des
-                // restes, qui ne sont pas encore portes.
-                nearest.collect();
+                // Le corps tombe dans la direction du tir puis reste au sol. Sans
+                // animation de chute, il explose sur place.
+                if (!EnemyAi.kill(nearest, projectile.heading())) {
+                    nearest.collect();
+                    explodeAt(nearest);
+                }
             } else {
                 String hurt = soundOf(nearest.definition(), 1);
                 if (hurt != null) {
@@ -302,8 +326,8 @@ public final class Combat {
 
         for (SceneObject object : world.objects()) {
             if (object.definition().objectType() > ObjectDefinition.TYPE_ENEMY
-                    || object.isCollected()) {
-                continue;
+                    || object.isCollected() || object.isRemains()) {
+                continue;   // un cadavre ne fait plus obstacle
             }
             int objectRadius = object.definition().radius();
             if (objectRadius == 0) {
@@ -372,6 +396,23 @@ public final class Combat {
 
         world.projectiles().add(new Projectile(shot, false,
                 enemy.x(), enemy.z(), startY, heading, pitch, shot.param(2)));
+    }
+
+    /**
+     * Pose l'explosion d'un ennemi qui n'a pas d'animation de chute.
+     *
+     * <p>{@code DEexpl} : l'objet prend l'explosion que declare son quatrieme parametre,
+     * recentree sur sa hauteur.
+     */
+    private void explodeAt(SceneObject enemy) {
+        ObjectDefinition definition = world.explosion(enemy.definition().param(4));
+        if (definition == null || definition.frames().isEmpty()) {
+            return;
+        }
+        int y = enemy.y() + (enemy.definition().height() - definition.height()) / 2;
+        SceneObject explosion = new SceneObject(definition, enemy.x(), enemy.z(), y, 0, 0);
+        explosion.setSelfAnimated(true);
+        world.objects().add(explosion);
     }
 
     /** Laisse une explosion a l'endroit de l'impact, si le tir en declare une. */

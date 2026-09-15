@@ -1,0 +1,407 @@
+package fov.breathless.engine;
+
+import fov.breathless.gld.level.Level;
+import fov.breathless.gld.object.ObjectDefinition;
+
+import java.util.Iterator;
+import java.util.List;
+
+/**
+ * Tirs, impacts et explosions.
+ *
+ * <p>Portage de {@code PlayerShot} et de la boucle de deplacement des projectiles
+ * (Sorgenti/Objects.asm). Un tir accelere jusqu'a sa vitesse maximale, s'arrete sur un
+ * mur, sur une cible ou au bout de sa portee, et laisse une explosion s'il en declare une.
+ *
+ * <p>Un tir ne cumule pas des deplacements : il retient son point de depart et sa distance
+ * parcourue. Une trajectoire longue ne derive donc pas.
+ */
+public final class Combat {
+
+    /**
+     * Delai entre deux tirs, en cinquantiemes de seconde.
+     *
+     * <p><strong>Approximation</strong> : le moteur d'origine compte les pressions sur la
+     * gachette dans une variable {@code Fire} alimentee par la gestion clavier, avec un
+     * mode automatique par arme. Cette cadence fixe en tient lieu en attendant.
+     */
+    private static final int RELOAD_TICKS = 8;
+
+    /** Hauteur du canon au-dessus du sol, a defaut d'indication de l'arme. */
+    private static final int DEFAULT_MUZZLE_HEIGHT = 32;
+
+    private final World world;
+    private final Weapons weapons;
+    private final PlayerState state;
+    private final java.util.Map<Integer, ObjectDefinition> shotsByWeapon = new java.util.HashMap<>();
+    private int reload;
+    private SoundPlayer sound = SoundPlayer.SILENT;
+
+    /** Branche le son. Sans cela les tirs partent en silence. */
+    public void setSoundPlayer(SoundPlayer player) {
+        this.sound = (player == null) ? SoundPlayer.SILENT : player;
+    }
+
+    /** Nom du bruitage d'un objet, ou {@code null} : 0 depart, 1 impact, 2 mort. */
+    private static String soundOf(ObjectDefinition definition, int index) {
+        java.util.List<String> names = definition.sounds();
+        if (index < 0 || index >= names.size()) {
+            return null;
+        }
+        String name = names.get(index);
+        return (name == null || name.isBlank()) ? null : name;
+    }
+
+    public Combat(World world, Weapons weapons, PlayerState state,
+                  fov.breathless.gld.object.ObjectBank bank) {
+        this.world = world;
+        this.weapons = weapons;
+        this.state = state;
+        for (ObjectDefinition definition : bank.objects().values()) {
+            if (definition.objectType() == ObjectDefinition.TYPE_SHOT) {
+                shotsByWeapon.putIfAbsent(definition.param(7), definition);
+            }
+        }
+    }
+
+    public Weapons weapons() {
+        return weapons;
+    }
+
+    /** Avance d'un pas : tir eventuel, puis vol et impacts des projectiles. */
+    public void update(Camera camera, PlayerInput input, int playerBlock) {
+        if (input.nextWeapon) {
+            weapons.next();
+            input.nextWeapon = false;
+        }
+
+        if (reload > 0) {
+            reload--;
+        }
+        if (input.fire && reload == 0 && !state.isDead()) {
+            if (pullTrigger(camera, playerBlock)) {
+                reload = RELOAD_TICKS;
+            }
+        }
+
+        advanceProjectiles(camera);
+        advanceExplosions();
+    }
+
+    /** Amplitude de l'oscillation du lance-flammes, en pas d'angle. {@code PFflame}. */
+    private static final int FLAME_SWING = 40;
+
+    /** Ecart des deux tirs d'une arme amelioree. {@code PlayerFire}. */
+    private static final int BOOST_SPREAD = 8;
+
+    private int flameOscillation;
+    private int flameDirection = 6;
+
+    /**
+     * Appuie sur la gachette.
+     *
+     * <p>Portage de {@code PlayerFire}. Trois cas : le lance-flammes, dont la visee
+     * balaie de part et d'autre de l'axe ; une arme amelioree, qui part deux fois en
+     * eventail, le second tir gratuit ; et le cas ordinaire, un tir dans l'axe.
+     *
+     * @return {@code true} si au moins un projectile est parti
+     */
+    private boolean pullTrigger(Camera camera, int playerBlock) {
+        if (weapons.isFlamethrower()) {
+            flameOscillation += flameDirection;
+            if (flameOscillation >= FLAME_SWING || flameOscillation <= -FLAME_SWING) {
+                flameDirection = -flameDirection;
+            }
+            return fire(camera, playerBlock, flameOscillation, false);
+        }
+        if (weapons.isBoosted(weapons.active())) {
+            boolean first = fire(camera, playerBlock, -BOOST_SPREAD, false);
+            // Le second ne coute rien : l'original passe a6 non nul pour l'en dispenser.
+            return fire(camera, playerBlock, BOOST_SPREAD, true) || first;
+        }
+        return fire(camera, playerBlock, 0, false);
+    }
+
+    /**
+     * Tire un projectile.
+     *
+     * @param aimOffset ecart de visee, en pas d'angle
+     * @param free      si vrai, le tir ne consomme pas d'energie
+     * @return {@code false} si l'energie manque ou si l'arme n'a pas de projectile decrit
+     */
+    private boolean fire(Camera camera, int playerBlock, int aimOffset, boolean free) {
+        ObjectDefinition shot = weapons.projectile();
+        if (shot == null) {
+            return false;
+        }
+        if (!free) {
+            int cost = weapons.energyCost();
+            if (state.energy() < cost) {
+                // PFesci2 : l'arme claque a vide quand l'energie manque.
+                sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_FAULT);
+                return false;
+            }
+            state.spendEnergy(cost);
+        }
+
+        // La hauteur du canon est donnee par le douzieme parametre du projectile.
+        int muzzle = shot.param(12);
+        if (muzzle == 0) {
+            muzzle = DEFAULT_MUZZLE_HEIGHT;
+        }
+        int startY = world.floorHeight(playerBlock) + muzzle;
+
+        world.projectiles().add(new Projectile(shot, true,
+                camera.x() >> 16, camera.z() >> 16, startY,
+                (camera.heading() + aimOffset) & Trig.MASK,
+                camera.lookHeight() << 8, shot.param(2)));
+        // Le second tir d'une arme amelioree est muet : l'original passe d7 non nul.
+        if (!free) {
+            String fired = soundOf(shot, 0);
+            if (fired != null) {
+                sound.play(fired);
+            }
+        }
+        return true;
+    }
+
+    private void advanceProjectiles(Camera camera) {
+        Iterator<Projectile> iterator = world.projectiles().iterator();
+        while (iterator.hasNext()) {
+            Projectile projectile = iterator.next();
+
+            if (!projectile.advance()) {
+                // Portee epuisee : le tir se dissipe sans toucher quoi que ce soit.
+                explode(projectile);
+                iterator.remove();
+                continue;
+            }
+            if (hitsGeometry(projectile) || hitsTarget(projectile, camera)) {
+                explode(projectile);
+                iterator.remove();
+            }
+        }
+    }
+
+    /** Le tir a-t-il rencontre un mur, un plafond ou un sol ? */
+    private boolean hitsGeometry(Projectile projectile) {
+        int cellX = Math.floorDiv(projectile.x(), Level.BLOCK_SIZE);
+        int cellZ = Math.floorDiv(projectile.z(), Level.BLOCK_SIZE);
+
+        int code = world.cell(cellX, cellZ);
+        if (code <= 0) {
+            return true;   // mur plein, ou hors du monde jouable
+        }
+        return projectile.y() <= world.floorHeight(code)
+                || projectile.y() >= world.ceilHeight(code);
+    }
+
+    /**
+     * Voisinage teste par un tir du joueur : sa propre case, plus les trois cases de
+     * l'octant vers lequel il va.
+     *
+     * <p>Portage de {@code CollTestOffsetTable} (Sorgenti/Objects.asm). Le moteur d'origine
+     * range les objets par case et ne parcourt que ces quatre listes ; sans cette
+     * restriction, un tir peut toucher une cible situee ailleurs dans le niveau.
+     */
+    private static final int[][] NEIGHBOURS = {
+        {1, -1, 1, 0, 1, 1},
+        {1, 0, 1, 1, 0, 1},
+        {1, 1, 0, 1, -1, 1},
+        {0, 1, -1, 1, -1, 0},
+        {-1, 1, -1, 0, -1, -1},
+        {-1, 0, -1, -1, 0, -1},
+        {-1, -1, 0, -1, 1, -1},
+        {0, -1, 1, -1, 1, 0},
+    };
+
+    /**
+     * Le tir a-t-il atteint une cible ?
+     *
+     * <p>Un tir du joueur cherche les objets solides ; un tir ennemi cherche le joueur.
+     *
+     * <p>Cote joueur, trois regles reprises de {@code MSctrlobjcoll} :
+     *
+     * <ul>
+     *   <li>seuls comptent les objets <em>dans le voisinage immediat</em> du tir, cf.
+     *       {@link #NEIGHBOURS} ;</li>
+     *   <li>la portee est le carre de la <em>somme</em> des deux rayons, pas la somme de
+     *       leurs carres — l'original ne fait la somme des carres que pour le joueur ;</li>
+     *   <li>tout objet de type inferieur ou egal a un ennemi arrete le tir, decors compris.
+     *       Un pilier protege donc ce qu'il y a derriere.</li>
+     * </ul>
+     *
+     * <p>Entre plusieurs candidats, c'est le plus proche qui encaisse. L'original prend le
+     * premier de sa liste de case, un ordre de placement : deux ennemis cote a cote se
+     * volaient alors les coups.
+     *
+     * <p>Aucun test de hauteur : le moteur d'origine n'en fait pas pour les objets. Viser
+     * au-dessus d'un ennemi ne le sauve pas.
+     */
+    private boolean hitsTarget(Projectile projectile, Camera camera) {
+        int radius = projectile.radius();
+
+        if (!projectile.isFromPlayer()) {
+            int reach = radius * radius + Player.WIDTH * Player.WIDTH;
+            int dx = (camera.x() >> 16) - projectile.x();
+            int dz = (camera.z() >> 16) - projectile.z();
+            if (dx * dx + dz * dz > reach) {
+                return false;
+            }
+            // Un tir qui passe bien au-dessus de la tete ne touche pas.
+            if (camera.y() + radius + 3 < projectile.y()) {
+                return false;
+            }
+            // PlayerHit crie a chaque coup encaisse, pas seulement au dernier.
+            int before = state.health() + state.shields();
+            state.hit(projectile.power());
+            if (state.health() + state.shields() < before) {
+                sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_SCREAM);
+            }
+            return true;
+        }
+
+        SceneObject nearest = nearestTarget(projectile, radius);
+        if (nearest == null) {
+            return false;
+        }
+        if (nearest.definition().objectType() == ObjectDefinition.TYPE_ENEMY) {
+            if (nearest.damage(projectile.power())) {
+                String death = soundOf(nearest.definition(), 2);
+                if (death != null) {
+                    sound.play(death);
+                }
+                EnemyAi.kill(nearest);
+                // Abattu : il quitte la scene. Le moteur d'origine laisse a la place des
+                // restes, qui ne sont pas encore portes.
+                nearest.collect();
+            } else {
+                String hurt = soundOf(nearest.definition(), 1);
+                if (hurt != null) {
+                    sound.play(hurt);
+                }
+                EnemyAi.wound(nearest);
+            }
+        }
+        // Le bareme de points n'est pas encore identifie dans les donnees : le quatrieme
+        // parametre des ennemis vaut 1 a 3, ce qui ne ressemble pas a un score. Rien n'est
+        // credite tant que la regle n'est pas etablie.
+        return true;
+    }
+
+    /** Objet solide le plus proche du tir dans son voisinage, ou {@code null}. */
+    private SceneObject nearestTarget(Projectile projectile, int radius) {
+        int cellX = Math.floorDiv(projectile.x(), Level.BLOCK_SIZE);
+        int cellZ = Math.floorDiv(projectile.z(), Level.BLOCK_SIZE);
+        int[] octant = NEIGHBOURS[(projectile.heading() >> 8) & 7];
+
+        SceneObject nearest = null;
+        long nearestDistance = Long.MAX_VALUE;
+
+        for (SceneObject object : world.objects()) {
+            if (object.definition().objectType() > ObjectDefinition.TYPE_ENEMY
+                    || object.isCollected()) {
+                continue;
+            }
+            int objectRadius = object.definition().radius();
+            if (objectRadius == 0) {
+                continue;   // un objet sans largeur ne fait pas obstacle
+            }
+            if (!inNeighbourhood(object, cellX, cellZ, octant)) {
+                continue;
+            }
+            int dx = object.x() - projectile.x();
+            int dz = object.z() - projectile.z();
+            long distance = (long) dx * dx + (long) dz * dz;
+            long reach = (long) (radius + objectRadius) * (radius + objectRadius);
+            if (distance > reach || distance >= nearestDistance) {
+                continue;
+            }
+            nearestDistance = distance;
+            nearest = object;
+        }
+        return nearest;
+    }
+
+    /** L'objet occupe-t-il la case du tir ou l'une des trois de son octant ? */
+    private static boolean inNeighbourhood(SceneObject object, int cellX, int cellZ,
+                                           int[] octant) {
+        int objectX = Math.floorDiv(object.x(), Level.BLOCK_SIZE);
+        int objectZ = Math.floorDiv(object.z(), Level.BLOCK_SIZE);
+        if (objectX == cellX && objectZ == cellZ) {
+            return true;
+        }
+        for (int i = 0; i < octant.length; i += 2) {
+            if (objectX == cellX + octant[i] && objectZ == cellZ + octant[i + 1]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Lance un projectile ennemi, vise sur le joueur.
+     *
+     * <p>Le numero d'arme d'un ennemi renvoie a un projectile de la banque, dont les
+     * numeros dix a quatorze leur sont reserves.
+     *
+     * <p>Le tir ne part <strong>pas</strong> dans l'axe de l'ennemi : le moteur d'origine
+     * calcule l'angle exact vers le joueur, par racine carree puis arc-sinus affine dans la
+     * table des sinus ({@code EnemiesFire} dans Objects.asm). Un ennemi ne tournant que par
+     * huitiemes de tour, tirer dans son axe le ferait manquer presque a tous les coups.
+     */
+    void enemyShot(SceneObject enemy, int gun, int playerX, int playerZ, int playerY) {
+        ObjectDefinition shot = shotsByWeapon.get(gun);
+        if (shot == null) {
+            return;
+        }
+        int dx = playerX - enemy.x();
+        int dz = playerZ - enemy.z();
+        int distance = (int) Math.round(Math.sqrt((double) dx * dx + (double) dz * dz));
+        if (distance == 0) {
+            return;
+        }
+        int heading = (int) Math.round(Math.atan2(dz, dx) * Trig.STEPS / (2 * Math.PI))
+                & Trig.MASK;
+
+        int startY = enemy.y() + enemy.definition().height() / 2;
+        // Inclinaison telle que le tir atteigne la hauteur du joueur a sa distance.
+        int pitch = (int) (((long) (playerY - startY) << 15) / distance);
+
+        world.projectiles().add(new Projectile(shot, false,
+                enemy.x(), enemy.z(), startY, heading, pitch, shot.param(2)));
+    }
+
+    /** Laisse une explosion a l'endroit de l'impact, si le tir en declare une. */
+    private void explode(Projectile projectile) {
+        int index = projectile.explosionIndex();
+        if (index < 0) {
+            return;
+        }
+        ObjectDefinition definition = world.explosion(index);
+        if (definition == null || definition.frames().isEmpty()) {
+            return;
+        }
+        SceneObject explosion = new SceneObject(definition,
+                projectile.x(), projectile.z(), projectile.y(), 0, 0);
+        explosion.setSelfAnimated(true);
+        world.objects().add(explosion);
+    }
+
+    /** Fait vivre les explosions et retire celles qui ont fini de bruler. */
+    private void advanceExplosions() {
+        List<SceneObject> objects = world.objects();
+        for (int i = objects.size() - 1; i >= 0; i--) {
+            SceneObject object = objects.get(i);
+            if (!object.isSelfAnimated()) {
+                continue;
+            }
+            int next = object.animCounter() + 1;
+            if (next >= object.definition().frames().size()) {
+                objects.remove(i);
+            } else {
+                object.setAnimCounter(next);
+            }
+        }
+    }
+}

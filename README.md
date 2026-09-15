@@ -1,0 +1,430 @@
+# Breathless-JME
+
+Portage en Java / jMonkeyEngine de **Breathless** (Fields of Vision, 1995-96), FPS
+texture-mappé pour Amiga AGA.
+
+![Le jeu](docs/images/jeu.png)
+
+Le moteur est réécrit depuis l'assembleur 68k d'origine : raycaster, sprites, effets,
+combat, IA, panneau de bord, carte, terminal, son et musique. Rien n'est émulé — tout est
+porté, et vérifié contre les données du jeu.
+
+![Extérieur](docs/images/exterieur.png)
+
+## Parti pris
+
+**Port fidèle du raycaster.** Le moteur d'origine est réécrit en Java à l'identique :
+lancer de rayons DDA une passe par colonne, rendu dans un tampon *chunky* 320x200 en
+palette 256 couleurs. jMonkeyEngine n'affiche ce tampon que comme une texture plein
+écran, et prend en charge la fenêtre, les entrées et l'audio.
+
+Ce choix privilégie la fidélité au pixel plutôt que l'exploitation du GPU. Les
+conséquences sont assumées :
+
+- pas de vraie 3D, donc pas de rotation verticale libre — mais le décalage vertical du
+  regard (`LookHeight`) existe déjà dans l'original et sera repris ;
+- la géométrie reste contrainte à la grille de blocs ;
+- l'essentiel du travail est du portage 1:1 de code assembleur documenté.
+
+**Formats d'origine lus directement, et exportables.** Le jeu ouvre les `.GLD` tels
+quels — décompression comprise — ce qui évite d'entretenir une copie des données. L'outil
+`gld-cli` sert à les *inspecter* : il exporte textures, sprites, images, sons, modules
+ProTracker et cartes en PNG, WAV et `.mod`. C'est par lui que chaque format a été vérifié
+avant d'être branché dans le moteur.
+
+## Structure
+
+| Module | Rôle |
+|---|---|
+| `gld-core` | lecture des formats d'origine : décompression SLZ/VDCO, parseurs `.GLD` |
+| `engine` | raycaster et rastérisation logicielle — Java pur, sans dépendance graphique |
+| `gld-cli` | outils en ligne de commande : inspection, export PNG, rendu d'images fixes |
+| `game` | coquille jMonkeyEngine : fenêtre, entrées, audio |
+
+Le moteur est volontairement isolé de jMonkeyEngine : il produit un tampon 320×200 en
+index de palette, que la coquille se contente d'afficher. Cela permet de le tester et de
+le déboguer en écrivant des PNG, sans ouvrir de fenêtre.
+
+Une image complète coûte environ **0,13 ms** sur un cœur, soit de l'ordre de 7 000 images
+par seconde. Le rendu logiciel ne sera pas le facteur limitant, et rien n'est alloué
+pendant une image.
+
+### Les trois passes d'une image
+
+1. **Rayons** — une DDA par colonne, qui n'enregistre que les *changements* de bloc.
+2. **Murs** — pans verticaux du plus proche au plus lointain, avec deux bornes de découpe
+   qui se resserrent. Les pixels laissés libres sont marqués « sol » ou « plafond » de tel
+   bloc.
+3. **Surfaces horizontales** — les pixels marqués sont regroupés en segments par ligne.
+   Sur une ligne, la profondeur est constante : le placage y est affine, donc linéaire.
+4. **Objets** — sprites triés du plus lointain au plus proche, chaque colonne découpée
+   contre les bornes que la passe des murs a laissées à cette profondeur. Pas de tampon
+   de profondeur : un objet derrière un mur disparaît de lui-même.
+
+### Les effets
+
+Chaque bloc porte un **numéro de trigger** ; tous ceux qui partagent le même numéro
+bougent ensemble, ce qui fait qu'une porte large de trois cases s'ouvre d'un seul tenant.
+Marcher sur un bloc déclenche sa liste d'effets, chaque entrée visant un trigger. Un effet
+occupe un emplacement parmi 42 et avance d'un pas par cinquantième de seconde jusqu'à se
+retirer de lui-même.
+
+Les hauteurs de sol et de plafond vivent donc dans un **état mutable** du monde, séparé
+des blocs issus du fichier, qui restent la description d'origine intacte.
+
+Une porte refuse de se refermer tant que le joueur se tient dessous.
+
+### Les animations
+
+Deux cadences, toutes deux plus lentes que l'affichage :
+
+- **textures** : une image toutes les 8 (6,25 par seconde) ;
+- **objets à animation simple** : une image toutes les 4 (12,5 par seconde).
+
+L'animation d'un objet appartient à son **type**, pas à ses instances : tous les bidons
+d'acide d'un niveau bouillonnent à l'unisson. Les ennemis font exception — leur pose suit
+leur comportement, pas l'horloge, et attend donc l'IA du jalon 3.
+
+Usage réel dans les vingt niveaux, qui a guidé les priorités :
+
+| Effet | Occurrences | État |
+|---|---:|---|
+| Réveiller un ennemi | 519 | porté |
+| Porte, Porte 2, Porte descendante | 311 | porté |
+| Ascenseurs | 66 | porté |
+| Sols et plafonds mobiles | 14 | porté |
+| Lumières clignotantes | 39 | porté |
+| Terminal, téléportation, fin de niveau | 112 | logique de jeu, jalon 3 |
+| Lumières liées | 37 | à faire |
+
+Les effets 1, 9, 10 et 18 du catalogue ne sont utilisés par aucun niveau.
+
+La spécification des formats binaires est dans [`docs/formats-gld.md`](docs/formats-gld.md).
+
+## Construire et lancer
+
+Nécessite un JDK 21 (le *toolchain* Gradle s'en charge).
+
+```bash
+gradle build
+
+# Inventaire des fichiers de données d'origine
+gradle cli --args="probe <chemin vers les .GLD>"
+
+# Résumé des vingt niveaux
+gradle cli --args="levels <chemin vers les .GLD>"
+
+# Détail d'un niveau, avec aperçu ASCII de la carte
+gradle cli --args="level <chemin>/BLES0006.GLD"
+
+# Export de la carte automatique d'un niveau, au départ puis complète
+gradle cli --args="map <chemin vers les .GLD> <chemin>/BLES0006.GLD <sortie>"
+
+# Export des dix images plein écran en PNG
+gradle cli --args="pictures <chemin vers les .GLD> <répertoire de sortie>"
+
+# Conversion des morceaux P61A en modules ProTracker, et rendu WAV
+gradle cli --args="modules <chemin vers les .GLD> <répertoire de sortie>"
+
+# Inventaire de la banque sonore et export des bruitages en WAV
+gradle cli --args="sounds <chemin vers les .GLD> <répertoire de sortie>"
+
+# Export des quatre pages du terminal
+gradle cli --args="terminal <chemin vers les .GLD> <répertoire de sortie>"
+
+# Export du panneau de bord, vide, rempli, et sous une vue de jeu
+gradle cli --args="panel <chemin vers les .GLD> <répertoire de sortie>"
+
+# Export de la palette, de la rampe d'éclairage et des 97 textures en PNG
+gradle cli --args="textures <chemin vers les .GLD> <répertoire de sortie>"
+
+# Export des sprites d'objets en PNG transparents
+gradle cli --args="sprites <chemin vers les .GLD> <répertoire de sortie>"
+
+# Rendu de vues fixes depuis le point de départ d'un niveau
+gradle cli --args="render <chemin vers les .GLD> <chemin>/BLES0006.GLD <sortie>"
+```
+
+### Jouer
+
+```bash
+gradle :game:run --args="<chemin vers les .GLD>"
+```
+
+| Touche | Action |
+|---|---|
+| Flèches, ZQSD ou WASD | avancer, reculer, tourner |
+| Espace, E ou Entrée | **actionner** : ouvrir une porte face à soi, appeler un ascenseur |
+| Ctrl | tirer |
+| Tab | **carte** — elle remplace la vue et suspend le jeu, comme dans l'original |
+| 1 à 6 | choisir une arme |
+| X | arme suivante |
+| Maj | courir |
+| Alt | pas de côté (les touches gauche/droite se déplacent au lieu de tourner) |
+| + / − | agrandir ou réduire la fenêtre de jeu |
+| Pavé 7 8 9 0 | grosseur des pixels : 1×1, 2×1, 1×2, 2×2 |
+| Page préc. / suiv. | changer de niveau |
+| Échap | menu de configuration — il porte la commande de sortie |
+
+La simulation tourne à **pas fixe, 50 Hz** — la fréquence PAL pour laquelle les constantes
+de déplacement d'origine ont été réglées. L'affichage, lui, suit la fréquence de l'écran.
+
+Les tests d'intégration sur les données d'origine sont ignorés si celles-ci sont
+absentes. Pour les activer :
+
+```bash
+gradle test -Dbreathless.data=<chemin vers les .GLD>
+```
+
+### Les écrans fixes
+
+![Écran de titre](docs/images/titre.png)
+
+![Présentation du premier monde](docs/images/monde1.png)
+
+La banque graphique contient dix images plein écran — le titre, les quatre présentations
+de monde, deux logos, les crédits, la bannière de fin de partie et l'écran final. Toutes
+sont compressées en **VDCO**, la même compression que les conteneurs `.GLD`. Chaque image
+porte sa propre palette, qui remplace celle du jeu le temps de l'afficher, et sa propre
+position : le titre couvre l'écran, la bannière de fin ne fait que 288×40 et se pose au
+milieu.
+
+Le jeu montre le titre au lancement, présente chaque monde la première fois qu'on y entre,
+et affiche la bannière quand le joueur meurt — Espace passe à la suite.
+
+### La fenêtre de jeu
+
+![Fenêtre réduite, gros pixels](docs/images/fenetre-reduite.png)
+
+Huit tailles, de 96×60 à 320×200 par pas de 32×20, et quatre grosseurs de pixel : 1×1,
+2×1, 1×2, 2×2. C'est ainsi que l'original se réglait pour gagner de la vitesse — moins de
+colonnes et de lignes à calculer, l'image restant de même taille à l'écran. Le rendu se
+fait à la taille réduite puis se répète : un pixel double est un gros pixel, pas une image
+lissée.
+
+Une fenêtre réduite laisse voir la **tenture** qui l'entoure, `Graphic/Background01.raw`,
+une tuile de 128×128 répétée sur toute la vue.
+
+### Les codes de niveau
+
+Seize caractères rendent une partie : santé, boucliers, énergie, crédits, les six armes
+avec leur amélioration, l'arme en main, le monde et le niveau. Dix octets sont assemblés,
+brouillés par un ou exclusif avec une clé de 32 bits, puis découpés en seize groupes de
+cinq bits — d'où un alphabet de trente-deux symboles, `1` à `9` puis `A` à `W`.
+
+Le portage est **exact** : le code de départ écrit en dur dans le jeu,
+`181CEIGGLJRJSE2T`, se relit et **se réécrit caractère pour caractère**. Un test le
+vérifie, et c'est lui qui a révélé le seul écart qui restait — l'original applique sa clé
+en deux mots longs puis *un mot*, si bien que les deux derniers octets voient le mot bas
+de la clé et non son mot haut.
+
+Le jeu affiche le code à la fin de chaque niveau, et l'accepte au lancement :
+
+```bash
+gradle run --args="../Breathless 181CEIGGLJRJSE2T"
+```
+
+### La carte
+
+![Carte automatique](docs/images/carte.png)
+
+Tabulation montre la carte : elle remplace la vue et suspend le jeu, exactement comme
+l'original. Le relevé se fait en avançant — trois rayons partent du regard du joueur et
+marquent les cases traversées jusqu'à un mur ou une porte fermée. Le tracé dit ce que vaut
+chaque passage : **blanc** infranchissable, **gris** franchissable, **jaune** marche ou
+changement de plafond, fond sombre pour le sol déjà relevé.
+
+### Le son
+
+La banque `SGLD` a la même forme que la banque graphique : un catalogue de noms de quatre
+caractères, chacun pointant sur un enregistrement de seize octets — longueur, période
+Amiga, volume, boucle, priorité, canaux, type. Trois sortes d'enregistrements, que
+`InitAudio` démêle et que le parseur reproduit :
+
+- l'échantillon suit l'en-tête ;
+- l'en-tête porte le **nom d'un autre son**, dont il reprend l'échantillon avec sa propre
+  période et son propre volume — le cri d'un Devil est celui d'un autre monstre, joué plus
+  bas ;
+- l'en-tête est un **tirage au sort** entre trois sons nommés.
+
+Quarante des quarante-sept entrées sont des bruitages, sept sont des morceaux. La fréquence
+se déduit de la période : `3 546 895 / période`, l'horloge PAL.
+
+Les bruitages sont joués : porte, interrupteur, téléport, tir, arme vide, impact, mort,
+réveil d'ennemi, cri du joueur.
+
+#### La musique
+
+Les sept morceaux sont au format **P61A** — The Player 6.1, un empaqueteur de modules
+ProTracker. Le décodeur est écrit d'après la **description publique du format**, celle de
+l'outil [p61aconv](https://github.com/howprice/p61aconv) de Huw Price sous licence MIT,
+elle-même adossée au guide Player61A. Il n'emprunte rien au lecteur d'origine, qui
+appartient à Jarno Paananen : c'est le format qui est réimplémenté, pas son code.
+
+Un module P61A range ses motifs piste par piste et les comprime par répétition : lignes
+vides, lignes identiques, et sauts en arrière pour rejouer un bloc déjà lu. Une fois
+déplié, on retrouve du ProTracker exact — même table de périodes, mêmes effets.
+
+La conversion est vérifiée sur les sept morceaux : **aucune des quelque 8 300 notes ne
+tombe hors de la table des périodes ProTracker**, les fichiers `.mod` produits ont
+exactement la taille que leur en-tête annonce, et les séquences ne visent que des motifs
+existants.
+
+Un lecteur ProTracker rend ensuite le morceau en audio — quatre voies mélangées, arpège,
+portamento, vibrato, glissements de volume, sauts de position et de motif, réglages de
+vitesse. Le rendu se fait une fois, à l'écart du fil principal, puis le morceau tourne en
+boucle.
+
+### Le téléport et la fin de niveau
+
+Le téléport marque un temps — trente-deux cinquantièmes, le fondu de l'original — puis
+dépose le joueur au centre de la case visée, élan coupé. La fin de niveau ne fait qu'une
+chose dans l'original : lever le drapeau de sortie ; ici elle enchaîne sur le niveau
+suivant.
+
+La **lumière liée** suit la course d'un autre effet : une porte qui monte éclaire la pièce
+à mesure qu'elle s'ouvre, proportionnellement à son avancement.
+
+### Le menu de configuration
+
+![Menu de configuration](docs/images/menu.png)
+
+Échap ouvre le menu, sur le même moniteur que le terminal — même police, même mécanisme de
+pages. Quatre pages : l'accueil, la fenêtre (taille, grosseur des pixels, viseur), le son
+(volume de la musique, musique et bruitages), et les options, qui montrent le code de la
+partie en cours. Les flèches déplacent le choix, gauche et droite font défiler une valeur,
+Espace valide.
+
+Deux pages de l'original ne sont pas portées : le réglage des touches et celui des
+contrôles, qui supposent une saisie de touche que ce portage n'offre pas — ses touches sont
+fixes. Le filtre audio non plus : c'est un filtre passe-bas du matériel Amiga, sans
+équivalent ici.
+
+### Le terminal
+
+![Le terminal](docs/images/terminal.png)
+
+Un effet de bloc ouvre le terminal, et le jeu s'arrête tant qu'il est là — le premier
+niveau en compte un, les suivants jusqu'à trois. C'est la **seule source d'armes du jeu** :
+`CollectWeapon` et `BoostWeapon` ne sont appelés de nulle part ailleurs. Quatre pages —
+accueil, armes, améliorations, accessoires — avec les prix d'origine, de 150 crédits pour
+dix points de bouclier à 35 000 pour la Death Machine.
+
+On y navigue avec les mêmes touches qu'en jeu : avancer et reculer déplacent le choix,
+Espace valide.
+
+L'original dessine ce menu avec des sprites matériels, sur un moniteur de 128×132 posé en
+haut à gauche, en deux couleurs sur fond transparent. Les textes, leurs positions et les
+prix sont ceux d'origine ; le fond est ici opaque, faute de quoi le texte se perd dans le
+décor, et les teintes exactes des sprites ne se déduisent pas de la source.
+
+### Les objets
+
+Les sprites sont encodés en « posts » à la Doom : par colonne, des segments verticaux
+opaques séparés par du vide. Quarante-trois types d'objets, dont une douzaine d'ennemis,
+chacun avec ses poses directionnelles et ses animations de marche, de blessure et de mort.
+
+![Quelques ennemis](docs/images/ennemis.png)
+
+### Les objets en attente
+
+Près de la moitié des objets d'un niveau attendent un déclencheur — dix-huit sur
+trente-neuf au premier niveau. Cette attente ne les rend pas absents : le moteur d'origine
+les inscrit dans la carte dès le chargement (`InitObjects`, TMapMain.asm) et ne consulte
+`obj_inactive` qu'au moment de faire bouger les ennemis. Un ennemi en attente **se voit,
+arrête les tirs et encaisse** ; il reste seulement immobile jusqu'à son réveil.
+
+### Le panneau de bord
+
+![Panneau de bord](docs/images/panneau.png)
+
+L'écran d'origine fait 320×240 : la vue occupe les deux cents premières lignes, le panneau
+les quarante dernières. Son fond n'est pas dans un `.GLD` — il était assemblé dans
+l'exécutable par `incbin "Graphic/Panel04.raw"`, une image de huit plans de bits que
+`PlanarImage` déplie en index de palette. Les chiffres viennent des deux polices de
+`Text.asm`, transcrites une fois pour toutes dans `ScoreFont`.
+
+Une installation qui ne contiendrait que les fichiers de données n'aura pas cette image :
+le jeu démarre alors sans panneau et reprend le compte-rendu en console.
+
+### La palette et la rampe d'éclairage
+
+Les 256 couleurs du jeu, et les trente-deux niveaux d'éclairage qui les font s'assombrir
+avec la distance — un simple tableau d'index vers index, comme dans l'original.
+
+![Palette et rampe d'éclairage](docs/images/palette.png)
+
+## Écarts assumés
+
+Le portage suit le moteur d'origine jusque dans ses bizarreries. Quelques points méritent
+d'être signalés parce qu'ils surprennent :
+
+- **Un tir ne teste pas la hauteur de sa cible.** L'original n'en tient compte que pour le
+  joueur ; viser au-dessus d'un ennemi ne le sauve pas.
+- **Les décors arrêtent les tirs.** Tout objet de type inférieur ou égal à un ennemi fait
+  obstacle : un pilier protège ce qui est derrière.
+- **Entre deux cibles à portée, c'est la plus proche qui encaisse.** L'original prend la
+  première de sa liste de case, c'est-à-dire un ordre de placement — deux ennemis côte à
+  côte se volaient alors les coups.
+- **La cadence de tir est fixe** (huit cinquantièmes). L'original compte les pressions sur
+  la gâchette, avec un mode automatique par arme.
+- **Un ennemi abattu disparaît** au lieu de laisser des restes.
+
+Et ce qui manque encore, relevé en relisant l'original :
+
+
+## Feuille de route
+
+- [x] **Socle** — décompression SLZ/VDCO, conteneur `.GLD`, validée sur les 25 fichiers
+- [x] **Données de niveau** — parseur `LGLD`, validé sur les 20 niveaux
+- [x] **Textures et palette** — parseurs `TGLD` et `GGLD`, export PNG de vérification
+- [x] **Raycaster et murs** — DDA en 16.16, textures principales, hautes et basses,
+      éclairage par table ; rendu vérifié sur les 20 niveaux
+- [x] **Sols, plafonds et ciel** — perspective par segments horizontaux
+- [x] **Jalon 1 : parcourir un niveau** — déplacement avec inertie, collisions et
+      glissement le long des murs, fenêtre jMonkeyEngine
+- [x] **Objets et sprites** — parseur `OGLD`, rendu des sprites avec tri par profondeur
+      et découpe contre le décor
+- [x] **Jalon 2 : le monde bouge** — portes, ascenseurs, sols et plafonds mobiles,
+      réveil des ennemis, lumières clignotantes, animations de textures et d'objets
+- [x] **État du joueur** — santé, boucliers, énergie, crédits, clés ; ramassage des
+      objets et sols nocifs
+- [x] **Armes et projectiles** — six armes, tir, vol, impacts et explosions
+- [x] **IA ennemie** — poursuite, errance, visée, tir et animation de marche
+- [x] **Panneau de bord** — les cinq compteurs, les voyants de clés et les six numéros
+      d'armes, sur l'image d'origine
+- [x] **Carte automatique** — relevé par trois rayons, tracé des passages selon leur
+      franchissement
+- [x] **Terminal** — les quatre pages de la boutique, les prix d'origine, achats d'armes,
+      d'améliorations et d'accessoires
+- [x] **Jalon 3 : le jeu** — panneau de bord, carte, terminal, téléport et fin de niveau.
+      **Les dix-sept effets du moteur d'origine sont portés** : un test joue toutes les
+      listes des vingt niveaux et vérifie qu'aucun ne manque
+- [x] **Bruitages** — parseur `SGLD`, liens et tirages, export WAV, lecture en jeu
+- [x] **Musique** — décodeur P61A, conversion en ProTracker, lecteur, musique par niveau
+- [x] **Viseur** — le motif d'origine, au centre de la vue
+- [x] **Codes de niveau** — codage exact, vérifié contre le code du jeu
+- [x] **Réglages d'affichage** — huit tailles de fenêtre, quatre grosseurs de pixel,
+      tenture de fond
+- [x] **Écrans fixes** — titre, présentations de monde, fin de partie, décompressés
+      depuis la banque graphique
+- [x] **Menu de configuration** — fenêtre, son, viseur, code de la partie
+- [x] **Jalon 4 : finitions** — audio, musique, codes de niveau, viseur, réglages
+      d'affichage, écrans fixes et menu
+
+## Origine et droits
+
+Le code d'origine a été publié par les Fields of Vision (Pierpaolo Di Maio et
+Alberto Longo) avec des conditions restrictives, rappelées dans le `Leggimi.txt` de
+l'archive d'origine : usage sans profit direct ou indirect, redistribution de l'archive
+originale sans modification, publication du jeu limitée au public italien.
+
+Le lecteur de modules P61A livré avec le jeu est de **Jarno Paananen** et son usage est
+soumis à son accord. Ce portage ne l'emploie pas : son décodeur P61A réimplémente le
+*format* d'après sa description publique — celle de [p61aconv](https://github.com/howprice/p61aconv),
+sous licence MIT — sans reprendre une ligne du lecteur d'origine. La question de l'accord
+de Jarno Paananen ne se pose donc que si l'on redistribue l'archive d'origine, pas pour le
+code de ce dépôt.
+
+Ces conditions n'ont rien d'une licence libre standard : **elles doivent être clarifiées
+avec les ayants droit avant toute diffusion publique de ce portage ou de ses données.**

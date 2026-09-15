@@ -1,0 +1,47 @@
+package fov.breathless.engine;
+
+/**
+ * Etat des commandes pour une image.
+ *
+ * <p>Les touches gauche et droite font tourner, sauf si {@link #strafe} est actif :
+ * elles deplacent alors lateralement. C'est le comportement d'origine, ou la touche
+ * « force side » bascule le sens des deux memes commandes.
+ */
+public final class PlayerInput {
+
+    public boolean forward;
+    public boolean backward;
+    public boolean left;
+    public boolean right;
+
+    /** Transforme la rotation gauche/droite en pas de cote. */
+    public boolean strafe;
+
+    /** Course plutot que marche : vitesse et vitesse de rotation plus elevees. */
+    public boolean run;
+
+    /** Tir. */
+    public boolean fire;
+
+    /** Changement d'arme, consomme au premier pas qui le voit. */
+    public boolean nextWeapon;
+
+    /**
+     * Action sur un interrupteur : ouvrir une porte, appeler un ascenseur.
+     *
+     * <p>Consommee au premier pas qui la voit, pour qu'un appui n'agisse qu'une fois.
+     */
+    public boolean action;
+
+    public void clear() {
+        forward = false;
+        backward = false;
+        left = false;
+        right = false;
+        strafe = false;
+        run = false;
+        fire = false;
+        nextWeapon = false;
+        action = false;
+    }
+}

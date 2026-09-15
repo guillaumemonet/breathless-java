@@ -439,17 +439,44 @@ d'être signalés parce qu'ils surprennent :
 
 ## Origine et droits
 
-Le code d'origine a été publié par les Fields of Vision (Pierpaolo Di Maio et
-Alberto Longo) avec des conditions restrictives, rappelées dans le `Leggimi.txt` de
-l'archive d'origine : usage sans profit direct ou indirect, redistribution de l'archive
-originale sans modification, publication du jeu limitée au public italien.
+Le `Leggimi.txt` de l'archive d'origine fait **deux concessions distinctes**, qu'il ne faut
+pas confondre.
 
-Le lecteur de modules P61A livré avec le jeu est de **Jarno Paananen** et son usage est
-soumis à son accord. Ce portage ne l'emploie pas : son décodeur P61A réimplémente le
-*format* d'après sa description publique — celle de [p61aconv](https://github.com/howprice/p61aconv),
-sous licence MIT — sans reprendre une ligne du lecteur d'origine. La question de l'accord
-de Jarno Paananen ne se pose donc que si l'on redistribue l'archive d'origine, pas pour le
-code de ce dépôt.
+**Le jeu.** Les droits sont détenus par Power Computing Ltd. et les Fields of Vision, qui
+en ont autorisé la publication sur le CD *Amy Resource* de Luca Danelon, « ad uso esclusivo
+del pubblico italiano ». C'est cette publication-là qui est limitée à l'Italie, et elle
+seule. Les fichiers de données du jeu ne sont donc **pas** dans ce dépôt : il faut les
+fournir soi-même.
 
-Ces conditions n'ont rien d'une licence libre standard : **elles doivent être clarifiées
-avec les ayants droit avant toute diffusion publique de ce portage ou de ses données.**
+**Les sources.** Le paragraphe suivant est nettement plus ouvert :
+
+> I sorgenti di Breathless e del Map Editor possono essere usati da chiunque purché non se
+> ne tragga alcun profitto, diretto o indiretto. Inoltre devono essere distribuiti nel loro
+> archivio originale senza alcuna modifica. Se qualcuno dovesse realizzare un prodotto
+> -RIGOROSAMENTE FREEWARE- ha l'obbligo morale di mandare ai FoV una copia.
+
+Soit : les sources sont utilisables **par quiconque**, à condition de n'en tirer aucun
+profit direct ou indirect ; l'archive des sources ne doit être redistribuée que telle
+quelle, sans modification ; et le texte **prévoit explicitement** qu'on en tire un produit
+*rigoureusement freeware*, avec l'obligation morale d'en envoyer une copie aux auteurs.
+
+Ce portage entre dans ce cadre : il est un produit freeware dérivé des sources, il ne
+redistribue pas l'archive d'origine, et il ne contient pas les données du jeu.
+
+**Ce qui en découle concrètement :**
+
+- pas de profit, ni direct ni indirect — pas de vente, pas de publicité, pas de dons ;
+- ne pas joindre les données du jeu au dépôt ni aux versions publiées ;
+- ne pas redistribuer l'archive des sources d'origine modifiée ;
+- envoyer une copie aux Fields of Vision : **Pierpaolo Di Maio** et **Alberto Longo**
+  (adresses de 1996 dans le `Leggimi.txt`, probablement mortes — les retrouver reste de bon
+  aloi).
+
+**Le lecteur de modules P61A** livré dans les sources est de **Jarno Paananen** et son usage
+est soumis à son accord. Ce portage ne l'emploie pas : son décodeur P61A réimplémente le
+*format* d'après sa description publique — celle de
+[p61aconv](https://github.com/howprice/p61aconv), sous licence MIT — sans reprendre une
+ligne du lecteur d'origine.
+
+Rien de tout cela n'est une licence libre standard, et ce n'est pas un avis juridique. Mais
+le texte autorise sans ambiguïté ce que fait ce dépôt.

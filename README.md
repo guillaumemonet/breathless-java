@@ -368,10 +368,11 @@ d'être signalés parce qu'ils surprennent :
   côte se volaient alors les coups.
 - **La cadence de tir est fixe** (huit cinquantièmes). L'original compte les pressions sur
   la gâchette, avec un mode automatique par arme.
-- **Un ennemi abattu disparaît** au lieu de laisser des restes.
-
-Et ce qui manque encore, relevé en relisant l'original :
-
+- **Un ennemi abattu disparaît** au lieu de laisser des restes : l'original en laisse.
+- **Le moniteur du terminal et des menus a un fond opaque**, là où l'original emploie des
+  sprites transparents, et ses teintes exactes ne se déduisent pas de la source.
+- **Le réglage des touches et des contrôles** n'est pas porté : les touches sont fixes.
+  Le filtre audio non plus, c'est un passe-bas du matériel Amiga.
 
 ## Feuille de route
 

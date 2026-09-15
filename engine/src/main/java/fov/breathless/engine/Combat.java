@@ -237,6 +237,8 @@ public final class Combat {
      *
      * <p>Aucun test de hauteur : le moteur d'origine n'en fait pas pour les objets. Viser
      * au-dessus d'un ennemi ne le sauve pas.
+     *
+     * <p>Un ennemi abattu rapporte les points que son type declare.
      */
     private boolean hitsTarget(Projectile projectile, Camera camera) {
         int radius = projectile.radius();
@@ -267,6 +269,9 @@ public final class Combat {
         }
         if (nearest.definition().objectType() == ObjectDefinition.TYPE_ENEMY) {
             if (nearest.damage(projectile.power())) {
+                // DestroyEnemy credite le deuxieme parametre du type abattu : de mille
+                // points pour le plus faible a vingt-cinq mille pour le plus coriace.
+                state.addScore(nearest.definition().param(2));
                 String death = soundOf(nearest.definition(), 2);
                 if (death != null) {
                     sound.play(death);
@@ -283,9 +288,6 @@ public final class Combat {
                 EnemyAi.wound(nearest);
             }
         }
-        // Le bareme de points n'est pas encore identifie dans les donnees : le quatrieme
-        // parametre des ennemis vaut 1 a 3, ce qui ne ressemble pas a un score. Rien n'est
-        // credite tant que la regle n'est pas etablie.
         return true;
     }
 

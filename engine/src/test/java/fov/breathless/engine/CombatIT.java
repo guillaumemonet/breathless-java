@@ -327,6 +327,97 @@ class CombatIT {
     }
 
     @Test
+    @DisplayName("Abattre un ennemi rapporte les points que son type declare")
+    void killingAnEnemyScoresItsValue() throws IOException {
+        Fixture fixture = fixture();
+        Level level = fixture.levels().get(0);
+        World world = new World(level, fixture.textures(), fixture.gfx(), fixture.objects());
+        Camera camera = Camera.atPlayerStart(level);
+
+        // Un type peu resistant, pour qu'un seul tir suffise.
+        ObjectDefinition kind = fixture.objects().objects().values().stream()
+                .filter(d -> d.objectType() == ObjectDefinition.TYPE_ENEMY)
+                .filter(d -> d.radius() > 0 && d.param(2) > 0)
+                .min(Comparator.comparingInt(d -> d.param(3)))
+                .orElse(null);
+        assertNotNull(kind, "aucun type d'ennemi exploitable");
+
+        int[][] cardinals = {{1, 0, 0}, {0, 1, 512}, {-1, 0, 1024}, {0, -1, 1536}};
+        int stepX = 0;
+        int stepZ = 0;
+        boolean found = false;
+        for (int[] cardinal : cardinals) {
+            int x = camera.cellX() + cardinal[0];
+            int z = camera.cellZ() + cardinal[1];
+            if (x >= 0 && z >= 0 && x < Level.MAP_SIZE && z < Level.MAP_SIZE
+                    && !level.isVoid(x, z) && !level.isWall(x, z)) {
+                stepX = cardinal[0];
+                stepZ = cardinal[1];
+                camera.setHeading(cardinal[2]);
+                found = true;
+                break;
+            }
+        }
+        Assumptions.assumeTrue(found, "pas de case degagee devant le point de depart");
+
+        SceneObject target = new SceneObject(kind,
+                (camera.x() >> 16) + stepX * 60, (camera.z() >> 16) + stepZ * 60,
+                world.floorHeight(level.blockIndex(camera.cellX(), camera.cellZ())), 0, 0);
+        target.setStrength(1);                      // un seul coup doit suffire
+        world.objects().clear();
+        world.objects().add(target);
+
+        PlayerState state = new PlayerState();
+        assertEquals(0, state.score(), "le score part de zero");
+
+        Combat combat = new Combat(world, new Weapons(fixture.objects()), state,
+                fixture.objects());
+        int playerBlock = level.blockIndex(camera.cellX(), camera.cellZ());
+        PlayerInput input = new PlayerInput();
+        input.fire = true;
+        combat.update(camera, input, playerBlock);
+        input.fire = false;
+        for (int tick = 0; tick < 200 && !world.projectiles().isEmpty(); tick++) {
+            combat.update(camera, input, playerBlock);
+        }
+
+        assertTrue(target.isCollected(), "l'ennemi n'a pas ete abattu");
+        assertEquals(kind.param(2), state.score(),
+                "le score credite ne correspond pas au bareme du type " + kind.name());
+    }
+
+    @Test
+    @DisplayName("Le bareme des ennemis suit leur resistance")
+    void scoresFollowToughness() throws IOException {
+        Fixture fixture = fixture();
+
+        int weakest = Integer.MAX_VALUE;
+        int toughest = 0;
+        int weakestScore = 0;
+        int toughestScore = 0;
+        for (ObjectDefinition d : fixture.objects().objects().values()) {
+            if (d.objectType() != ObjectDefinition.TYPE_ENEMY) {
+                continue;
+            }
+            assertTrue(d.param(2) >= 1000 && d.param(2) <= 25000,
+                    d.name() + " : bareme de " + d.param(2) + ", hors des valeurs du jeu");
+            if (d.param(3) < weakest) {
+                weakest = d.param(3);
+                weakestScore = d.param(2);
+            }
+            if (d.param(3) > toughest) {
+                toughest = d.param(3);
+                toughestScore = d.param(2);
+            }
+        }
+        // Si l'on avait lu le mauvais parametre, cette relation ne tiendrait pas.
+        assertTrue(toughestScore > weakestScore,
+                "le plus coriace (" + toughest + " PV, " + toughestScore + " points) ne"
+                        + " rapporte pas plus que le plus faible (" + weakest + " PV, "
+                        + weakestScore + " points)");
+    }
+
+    @Test
     @DisplayName("Un ennemi encaisse ses points de vie avant de tomber")
     void enemiesTakeTheirHitPoints() throws IOException {
         Fixture fixture = fixture();

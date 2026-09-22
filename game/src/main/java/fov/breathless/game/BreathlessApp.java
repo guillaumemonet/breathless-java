@@ -142,6 +142,12 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         // La souris ne sert pas encore : inutile de masquer le curseur.
         setDisplayStatView(false);
         setDisplayFps(false);
+        // jMonkeyEngine relie Echap a sa propre commande de sortie. Ici Echap ouvre le
+        // menu de configuration, qui porte la sortie : sans ce retrait, le jeu quitterait
+        // avant d'avoir montre le menu.
+        if (inputManager.hasMapping(INPUT_MAPPING_EXIT)) {
+            inputManager.deleteMapping(INPUT_MAPPING_EXIT);
+        }
 
         pixels = BufferUtils.createByteBuffer(
                 WIDTH * screenHeight * PixelUpload.BYTES_PER_PIXEL);
@@ -320,8 +326,8 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     }
 
     private void changePixels(boolean pressed, int type) {
-        if (pressed && viewSize.setPixelType(type)) {
-            applyViewSize();
+        if (pressed) {
+            viewSize.setPixelType(type);
         }
     }
 
@@ -330,6 +336,10 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
      *
      * <p>Refaire la fenetre de rendu coute assez pour ne le faire qu'au vrai changement :
      * le numero de revision dit s'il y a lieu.
+     *
+     * <p>C'est le <em>seul</em> endroit qui refait la fenetre de rendu, et il est appele
+     * en tete d'image, avant tout dessin : la taille reglee et le tampon rendu ne peuvent
+     * ainsi jamais se contredire. Les touches, elles, se contentent de changer le reglage.
      */
     private void applySettings() {
         if (settingsRevision == settings.revision()) {
@@ -554,11 +564,26 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         inputManager.addMapping(name, triggers.toArray(new KeyTrigger[0]));
     }
 
+    /**
+     * Les touches secondaires : le meme nom que la commande, suffixe de « 2 ».
+     *
+     * <p>La liste est explicite, et non deduite du suffixe : d'autres commandes finissent
+     * par un chiffre sans etre des doublons — {@code arme-2} est la troisieme arme, et la
+     * retailler en {@code arme-} la rendait illisible.
+     */
+    private static final java.util.Set<String> SECONDARY_ACTIONS = java.util.Set.of(
+            "avant2", "arriere2", "gauche2", "droite2",
+            "courir2", "pas-de-cote2", "tirer2", "actionner2");
+
+    /** Ramene une touche secondaire au nom de la commande qu'elle double. */
+    static String resolveAction(String action) {
+        return SECONDARY_ACTIONS.contains(action)
+                ? action.substring(0, action.length() - 1) : action;
+    }
+
     @Override
     public void onAction(String action, boolean pressed, float tpf) {
-        // Les touches secondaires portent le meme nom suffixe de « 2 ».
-        String name = action.endsWith("2") && !action.startsWith("pixel-")
-                ? action.substring(0, action.length() - 1) : action;
+        String name = resolveAction(action);
         switch (name) {
             case "avant" -> {
                 if (pressed && (routeToMenu("avant") || routeToTerminal("avant"))) {
@@ -630,13 +655,13 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
                 }
             }
             case "fenetre-plus" -> {
-                if (pressed && viewSize.resize(+1)) {
-                    applyViewSize();
+                if (pressed) {
+                    viewSize.resize(+1);
                 }
             }
             case "fenetre-moins" -> {
-                if (pressed && viewSize.resize(-1)) {
-                    applyViewSize();
+                if (pressed) {
+                    viewSize.resize(-1);
                 }
             }
             case "pixel-11" -> changePixels(pressed, ViewSize.PIXEL_1X1);
@@ -654,9 +679,13 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
                 }
             }
             default -> {
-                if (pressed && name.startsWith("arme-") && simulation.combat() != null) {
-                    simulation.combat().weapons()
-                            .select(Integer.parseInt(name.substring("arme-".length())));
+                // Un nom mal forme ne doit pas remonter : une exception ici tuerait le
+                // fil de rendu, et le jeu avec.
+                String index = name.startsWith("arme-")
+                        ? name.substring("arme-".length()) : "";
+                if (pressed && index.length() == 1 && Character.isDigit(index.charAt(0))
+                        && simulation.combat() != null) {
+                    simulation.combat().weapons().select(index.charAt(0) - '0');
                 }
             }
         }
@@ -746,6 +775,12 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
 
     @Override
     public void simpleUpdate(float tpf) {
+        // Avant tout dessin : le menu a pu changer la taille de la vue depuis la derniere
+        // image, et {@code blitView} lit la taille reglee en meme temps que le tampon
+        // rendu. Les reconstruire apres coup laisserait une image ou les deux ne
+        // s'accordent pas — et un tampon plus grand que l'ecran deborde.
+        applySettings();
+
         if (screenPicture != null) {
             accumulator = 0;
             if (screenTicks > 0 && --screenTicks == 0) {
@@ -772,7 +807,6 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
             PixelUpload.fill(pixels, screenPixels, WIDTH, screenHeight,
                     world.palette(false));
             image.setUpdateNeeded();
-            applySettings();
             if (configMenu.takeSaveRequest()) {
                 Configuration.save(configFile(), settings);
             }

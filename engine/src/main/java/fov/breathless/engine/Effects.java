@@ -448,11 +448,11 @@ public final class Effects {
             case FLOOR_UP -> oneWay(slot, ticks, blocks, false, +1);
             case CEIL_DOWN -> oneWay(slot, ticks, blocks, true, -1);
             case FLOOR_DOWN -> oneWay(slot, ticks, blocks, false, -1);
-            case DOOR -> cycle(slot, ticks, blocks, Motion.DOOR_OPENS, playerBlock);
-            case DOOR2 -> cycle(slot, ticks, blocks, Motion.DOUBLE_DOOR_OPENS, playerBlock);
-            case LIFT_UP -> cycle(slot, ticks, blocks, Motion.FLOOR_RISES, playerBlock);
-            case LIFT_DOWN -> cycle(slot, ticks, blocks, Motion.FLOOR_SINKS, playerBlock);
-            case DOOR_DOWN -> cycle(slot, ticks, blocks, Motion.FLOOR_SINKS, playerBlock);
+            case DOOR -> cycle(slot, ticks, blocks, Motion.DOOR_OPENS, playerBlock, true);
+            case DOOR2 -> cycle(slot, ticks, blocks, Motion.DOUBLE_DOOR_OPENS, playerBlock, true);
+            case DOOR_DOWN -> cycle(slot, ticks, blocks, Motion.FLOOR_SINKS, playerBlock, true);
+            case LIFT_UP -> cycle(slot, ticks, blocks, Motion.FLOOR_RISES, playerBlock, false);
+            case LIFT_DOWN -> cycle(slot, ticks, blocks, Motion.FLOOR_SINKS, playerBlock, false);
             case BLINKING_LIGHT -> blink(slot, ticks, blocks);
             case LIGHT_UP -> light(slot, ticks, blocks, +1);
             case LIGHT_DOWN -> light(slot, ticks, blocks, -1);
@@ -487,8 +487,18 @@ public final class Effects {
      * Cycle aller / pause / retour : portes et ascenseurs.
      *
      * <p>Une pause nulle laisse l'effet ouvert definitivement.
+     *
+     * <p>Les deux familles ne se comportent pas pareil devant le joueur. Une porte ne se
+     * referme pas sur lui : {@code DUdown} et ses jumelles comparent chaque bloc au sien et
+     * remettent tout en place s'il est dessous. Un ascenseur, lui, n'a <em>aucun</em> test
+     * de ce genre — {@code FloorUpDown} et {@code FloorDownUp} bougent leur plancher quoi
+     * qu'il arrive, ce qui est bien le moindre pour un ascenseur : lui faire refuser de
+     * bouger sous le joueur le bloque des qu'on monte dessus.
+     *
+     * @param yieldsToPlayer vrai pour une porte, faux pour un ascenseur
      */
-    private void cycle(Slot slot, int ticks, int[] blocks, Motion motion, int playerBlock) {
+    private void cycle(Slot slot, int ticks, int[] blocks, Motion motion, int playerBlock,
+                       boolean yieldsToPlayer) {
         switch (slot.status) {
             case STATE_NEW -> {
                 slot.status = STATE_OUT;
@@ -500,18 +510,19 @@ public final class Effects {
             case STATE_OUT -> cycleOut(slot, ticks, blocks, motion);
             case STATE_PAUSE -> {
                 // Le joueur present sous la porte suspend le decompte.
-                if (!contains(blocks, playerBlock)) {
-                    slot.counter -= ticks;
-                    if (slot.counter <= 0) {
-                        slot.counter = slot.param1;
-                        slot.status = STATE_BACK;
-                    }
+                if (yieldsToPlayer && contains(blocks, playerBlock)) {
+                    return;
+                }
+                slot.counter -= ticks;
+                if (slot.counter <= 0) {
+                    slot.counter = slot.param1;
+                    slot.status = STATE_BACK;
                 }
             }
             case STATE_BACK -> {
                 int step = Math.min(ticks, slot.counter);
                 move(blocks, motion, -step);
-                if (contains(blocks, playerBlock)) {
+                if (yieldsToPlayer && contains(blocks, playerBlock)) {
                     // Le joueur s'est glisse dessous : on remet tout en place et on attend.
                     move(blocks, motion, step);
                     return;

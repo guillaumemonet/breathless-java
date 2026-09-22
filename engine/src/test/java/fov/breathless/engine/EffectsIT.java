@@ -156,6 +156,60 @@ class EffectsIT {
      * abaisse le sol, {@code DoorDown} abaisse le sol seul. Confondre les deux dernieres
      * avec la premiere donne une porte qui s'etire sans jamais s'ouvrir.
      */
+    /**
+     * L'inverse d'une porte : un ascenseur ne cede pas au joueur.
+     *
+     * <p>{@code FloorUpDown} et {@code FloorDownUp} n'ont aucun test du joueur — ils
+     * bougent leur plancher quoi qu'il arrive. Leur appliquer la prudence d'une porte les
+     * bloque des qu'on monte dessus, ce qui est precisement ce qu'un ascenseur ne doit pas
+     * faire.
+     */
+    @Test
+    @DisplayName("Un ascenseur boucle son cycle meme avec le joueur dessus")
+    void aLiftMovesEvenUnderThePlayer() throws IOException {
+        Fixture fixture = fixture();
+
+        for (int effect : new int[]{7, 8}) {
+            boolean seen = false;
+            for (Level level : fixture.levels()) {
+                int list = findList(level, effect);
+                if (list < 0) {
+                    continue;
+                }
+                EffectEntry lift = entryOf(level, list, effect);
+                List<Integer> blocks = blocksOf(level, lift.trigger());
+                if (blocks.isEmpty() || lift.param1() <= 0 || lift.param2() <= 0) {
+                    continue;
+                }
+
+                World world = world(fixture, level);
+                Effects effects = new Effects(world);
+                int sample = blocks.get(0);
+                int start = world.floorHeight(sample);
+                int direction = (effect == 7) ? +1 : -1;
+
+                effects.trigger(list);
+                // Le joueur reste sur l'ascenseur pendant tout le cycle.
+                for (int tick = 0; tick < lift.param1(); tick++) {
+                    effects.update(1, sample, world.objects());
+                }
+                assertEquals(start + direction * lift.param1(), world.floorHeight(sample),
+                        level.name() + " effet " + effect + " : l'aller ne s'est pas fait");
+
+                int rest = lift.param2() + lift.param1() + 50;
+                for (int tick = 0; tick < rest; tick++) {
+                    effects.update(1, sample, world.objects());
+                }
+                assertEquals(start, world.floorHeight(sample),
+                        level.name() + " effet " + effect
+                                + " : l'ascenseur est reste bloque sous le joueur");
+                seen = true;
+                break;
+            }
+            assertTrue(seen, "aucun ascenseur exploitable pour l'effet " + effect);
+        }
+    }
+
     @Test
     @DisplayName("Chaque sorte de porte bouge le plan que l'original lui donne")
     void eachKindOfDoorMovesItsOwnSurface() throws IOException {

@@ -11,6 +11,7 @@ import com.jme3.texture.Texture;
 import com.jme3.ui.Picture;
 import com.jme3.util.BufferUtils;
 import fov.breathless.engine.Camera;
+import fov.breathless.engine.Career;
 import fov.breathless.engine.Crosshair;
 import fov.breathless.engine.Framebuffer;
 import fov.breathless.engine.LevelCode;
@@ -107,6 +108,14 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
      */
     private int retries = RETRIES;
 
+    /**
+     * La partie en cours : ce que le joueur emporte d'un niveau au suivant.
+     *
+     * <p>Refaite a neuf quand la partie recommence, et seulement la : le moteur d'origine
+     * n'appelle {@code InitScores} qu'au depart.
+     */
+    private Career career;
+
     /** Ecran fixe affiche, ou {@code null} quand on joue. */
     private fov.breathless.gld.gfx.Picture screenPicture;
     private Screens screens;
@@ -129,6 +138,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
 
     BreathlessApp(GameData data, LevelCode.State saved) {
         this.data = data;
+        this.career = new Career(data.objects());
         this.saved = saved;
         this.backdrop = data.backdrop();
         this.hud = (data.panel() == null) ? null : new Hud(data.panel());
@@ -202,6 +212,19 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     }
 
     private void loadLevel(int index) {
+        loadLevel(index, false);
+    }
+
+    /**
+     * Charge un niveau, en gardant la partie en cours.
+     *
+     * <p>{@code TMapStart} : le joueur traverse les niveaux avec ce qu'il a. Seul un
+     * nouveau depart le remet a neuf, et une reprise apres la mort le ramene a l'etat ou
+     * il est entre dans le niveau.
+     *
+     * @param playAgain vrai si l'on reprend un niveau deja joue
+     */
+    private void loadLevel(int index, boolean playAgain) {
         levelIndex = Math.floorMod(index, data.levels().size());
         Level level = data.levels().get(levelIndex);
 
@@ -209,11 +232,14 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         viewport = new Viewport(viewSize.renderWidth(), viewSize.renderHeight());
         renderer = new Renderer(world, viewport);
         camera = Camera.atPlayerStart(level);
-        simulation = new Simulation(world, camera, data.objects());
+        simulation = new Simulation(world, camera, data.objects(), career);
         if (saved != null && !restored) {
             restored = true;
             simulation.restore(saved);
         }
+        // InitScores2, apres la reprise eventuelle du code de niveau : c'est l'etat
+        // d'entree qui est mis de cote, code compris.
+        career.enterLevel(playAgain);
         if (soundPlayer != null) {
             simulation.setSoundPlayer(soundPlayer);
             startLevelMusic(level);
@@ -255,18 +281,30 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         if (retries > 0) {
             System.out.println("Mort. Tentatives restantes : " + retries);
             show(Screens.GAME_OVER, () -> {
-                loadLevel(retry);
+                // TMretr : on reprend le niveau dans l'etat ou on y est entre.
+                loadLevel(retry, true);
                 introducedWorld = 0;
             });
             return;
         }
         System.out.println("Partie terminee.");
         show(Screens.GAME_OVER, () -> show(Screens.TITLE, () -> {
-            retries = RETRIES;
-            introducedWorld = 0;
+            newGame();
             loadLevel(0);
             introduceWorld(0);
         }));
+    }
+
+    /**
+     * Repart de zero : {@code InitScores} et les trois tentatives.
+     *
+     * <p>C'est le seul endroit qui remet l'etat du joueur a neuf. Le faire a chaque niveau
+     * lui ferait tout perdre en chemin.
+     */
+    private void newGame() {
+        career = new Career(data.objects());
+        retries = RETRIES;
+        introducedWorld = 0;
     }
 
     /** Affiche le code du niveau suivant, pour pouvoir y revenir. */
@@ -855,8 +893,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
                     if (next >= data.levels().size()) {
                         // Le dernier niveau est fini : l'ecran de fin, puis le titre.
                         show(Screens.END, () -> show(Screens.TITLE, () -> {
-                            retries = RETRIES;
-                            introducedWorld = 0;
+                            newGame();
                             loadLevel(0);
                             introduceWorld(0);
                         }));

@@ -28,8 +28,15 @@ public final class Weapons {
     private final int[] power = new int[COUNT];
     private int active;
 
+    /**
+     * L'arsenal de depart.
+     *
+     * <p>Une banque absente laisse les six armes sans description : leur puissance se suit
+     * quand meme, ce dont se contentent le code de niveau et la reprise d'un niveau.
+     */
     public Weapons(ObjectBank bank) {
-        for (ObjectDefinition definition : bank.objects().values()) {
+        for (ObjectDefinition definition
+                : (bank == null) ? java.util.List.<ObjectDefinition>of() : bank.objects().values()) {
             if (definition.objectType() != ObjectDefinition.TYPE_SHOT) {
                 continue;
             }
@@ -82,6 +89,23 @@ public final class Weapons {
     public void setPower(int weapon, int value) {
         if (weapon >= 0 && weapon < COUNT && byWeapon[weapon] != null) {
             power[weapon] = Math.max(0, Math.min(2, value));
+        }
+    }
+
+    /**
+     * L'etat des six armes, rendu sous forme de copie.
+     *
+     * <p>{@code InitScores2} met {@code PlayerWeapons} de cote a chaque debut de niveau,
+     * pour pouvoir le rendre si le joueur y revient apres etre mort.
+     */
+    public int[] powers() {
+        return power.clone();
+    }
+
+    /** Rend a l'arsenal l'etat qu'il avait. */
+    public void setPowers(int[] values) {
+        for (int weapon = 0; weapon < Math.min(values.length, COUNT); weapon++) {
+            setPower(weapon, values[weapon]);
         }
     }
 

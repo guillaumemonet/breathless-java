@@ -32,7 +32,11 @@ public final class Simulation {
         }
         enemies.setSoundPlayer(this.sound);
     }
-    private final PlayerState state = new PlayerState();
+    /** Etat propre a cette simulation, quand aucune partie en cours n'est fournie. */
+    private final PlayerState ownState = new PlayerState();
+
+    /** La partie en cours, dont l'etat traverse les niveaux, ou {@code null}. */
+    private final Career career;
     private int currentBlock;
 
     /**
@@ -43,14 +47,31 @@ public final class Simulation {
     private static final int PLAYER_REACH = 2 * Player.WIDTH * Player.WIDTH;
 
     public Simulation(World world, Camera camera, fov.breathless.gld.object.ObjectBank bank) {
+        this(world, camera, bank, null);
+    }
+
+    /**
+     * Simule un niveau en reprenant l'etat d'un joueur deja en route.
+     *
+     * <p>Le moteur d'origine garde l'etat du joueur dans ses globales : il traverse les
+     * niveaux. Passer une {@link Career} evite de le recreer a chaque chargement, ce qui
+     * ferait tout perdre au passage d'un niveau au suivant.
+     *
+     * @param career la partie en cours, ou {@code null} pour un etat neuf
+     */
+    public Simulation(World world, Camera camera, fov.breathless.gld.object.ObjectBank bank,
+                      Career career) {
         this.world = world;
         this.camera = camera;
+        this.career = career;
         this.player = new Player(world);
         this.effects = new Effects(world);
-        this.combat = (bank == null) ? null : new Combat(world, new Weapons(bank), state, bank);
+        Weapons arsenal = (career != null) ? career.weapons()
+                : (bank == null) ? null : new Weapons(bank);
+        this.combat = (bank == null) ? null : new Combat(world, arsenal, state(), bank);
         this.enemies = new EnemyAi(world);
         this.autoMap = new AutoMap(world);
-        this.terminal = (combat == null) ? null : new Terminal(state, combat.weapons());
+        this.terminal = (combat == null) ? null : new Terminal(state(), combat.weapons());
         this.currentBlock = blockUnderCamera();
     }
 
@@ -101,7 +122,7 @@ public final class Simulation {
      * simulation ne sait pas charger.
      */
     public void restore(LevelCode.State saved) {
-        state.restore(saved.health(), saved.shields(), saved.energy(), saved.credits());
+        state().restore(saved.health(), saved.shields(), saved.energy(), saved.credits());
         if (combat == null) {
             return;
         }
@@ -135,8 +156,9 @@ public final class Simulation {
         return effects;
     }
 
+    /** L'etat du joueur : celui de la partie en cours, s'il y en a une. */
     public PlayerState state() {
-        return state;
+        return (career != null) ? career.state() : ownState;
     }
 
     public World world() {
@@ -173,18 +195,18 @@ public final class Simulation {
         followFloors();
         collectPickups();
 
-        int before = state.health() + state.shields();
-        state.standOn(world.level().blocks().get(currentBlock).floorDamage(), 1);
-        if (state.health() + state.shields() < before) {
+        int before = state().health() + state().shields();
+        state().standOn(world.level().blocks().get(currentBlock).floorDamage(), 1);
+        if (state().health() + state().shields() < before) {
             sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_SCREAM);
         }
 
         if (combat != null) {
             combat.update(camera, input, currentBlock);
         }
-        enemies.update(camera, state, combat);
+        enemies.update(camera, state(), combat);
         autoMap.survey(camera);
-        state.advance(1);
+        state().advance(1);
     }
 
     /**
@@ -226,7 +248,7 @@ public final class Simulation {
             if (dx * dx + dz * dz >= radius * radius + PLAYER_REACH) {
                 continue;
             }
-            if (state.collect(object.pickupSubtype(), object.pickupValue())) {
+            if (state().collect(object.pickupSubtype(), object.pickupValue())) {
                 object.collect();
             }
         }

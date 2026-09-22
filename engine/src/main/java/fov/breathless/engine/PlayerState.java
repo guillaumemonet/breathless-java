@@ -104,6 +104,40 @@ public final class PlayerState {
     }
 
     /**
+     * Reprend le score tel quel : une reprise de niveau le ramene a ce qu'il etait.
+     *
+     * <p>{@code InitScores2} le range dans sa copie de sauvegarde au meme titre que la
+     * sante ou les credits.
+     */
+    public void setScore(int points) {
+        score = Math.max(0, points);
+    }
+
+    /**
+     * Les quatre cles, dans l'ordre vert, jaune, rouge, bleu.
+     *
+     * <p>Rendues sous forme de copie : l'appelant en garde une photographie.
+     */
+    public boolean[] keys() {
+        return keys.clone();
+    }
+
+    /** Rend au joueur les cles qu'il avait. */
+    public void setKeys(boolean[] held) {
+        System.arraycopy(held, 0, keys, 0, Math.min(held.length, keys.length));
+    }
+
+    /**
+     * Retire les quatre cles.
+     *
+     * <p>{@code InitScores2} fait {@code clr.l GreenKey} a chaque debut de niveau : les
+     * cles sont la seule chose que le joueur ne garde pas d'un niveau au suivant.
+     */
+    public void clearKeys() {
+        java.util.Arrays.fill(keys, false);
+    }
+
+    /**
      * Remet le joueur dans l'etat que porte un code de niveau.
      *
      * <p>{@code LevelCodeIn} ecrit ces quatre valeurs telles quelles, sans les borner :

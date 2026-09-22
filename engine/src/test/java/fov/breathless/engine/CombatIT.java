@@ -463,6 +463,46 @@ class CombatIT {
         throw new AssertionError("aucun ennemi dans les vingt niveaux");
     }
 
+    /**
+     * L'arsenal traverse les niveaux, et une mort le ramene a l'entree du niveau.
+     *
+     * <p>{@code InitScores2} range {@code PlayerWeapons} et {@code PlayerActiWeapon} dans
+     * sa copie de sauvegarde au meme titre que la sante. Le terminal etant la seule source
+     * d'armes du jeu, les perdre en changeant de niveau rendrait tout achat inutile.
+     */
+    @Test
+    @DisplayName("Les armes achetees traversent les niveaux, et une mort rend celles d'entree")
+    void weaponsCrossLevelsAndRewindOnDeath() throws IOException {
+        Fixture fixture = fixture();
+        Career career = new Career(fixture.objects());
+        Weapons weapons = career.weapons();
+
+        // Premier niveau : on arrive avec l'arme de base seule.
+        career.enterLevel(false);
+        assertTrue(weapons.owns(0));
+        assertFalse(weapons.owns(3));
+
+        // On achete au terminal, puis on passe au niveau suivant.
+        weapons.give(3);
+        weapons.boost(3);
+        weapons.select(3);
+        career.enterLevel(false);
+
+        assertTrue(weapons.owns(3), "l'arme achetee a ete perdue au changement de niveau");
+        assertTrue(weapons.isBoosted(3), "l'amelioration a ete perdue");
+        assertEquals(3, weapons.active(), "l'arme en main a ete perdue");
+
+        // Dans ce niveau-ci on en achete une autre, puis on meurt.
+        weapons.give(5);
+        weapons.select(5);
+        career.enterLevel(true);
+
+        assertTrue(weapons.owns(3), "l'arme d'avant le niveau aurait du rester");
+        assertFalse(weapons.owns(5),
+                "l'arme achetee dans le niveau perdu aurait du l'etre aussi");
+        assertEquals(3, weapons.active(), "l'arme en main a l'entree n'a pas ete rendue");
+    }
+
     @Test
     @DisplayName("Chacun des douze ennemis laisse au sol ce que ses donnees prescrivent")
     void everyEnemyLeavesTheRightRemains() throws IOException {

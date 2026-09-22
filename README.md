@@ -334,10 +334,29 @@ sont donc au coup par coup — sauf le lance-flammes, seul à porter le bit qui 
 continu. Aucune arme n'a l'autofire dans les données, et le code qui l'aurait géré est
 commenté dans l'original.
 
-Un ennemi abattu **tombe** dans la direction du tir, sur trois images de huit pas chacune,
-puis reste au sol : il n'est plus un ennemi, ne bouge plus et n'arrête plus les tirs. Les
-types sans animation de chute explosent sur place. Un statut négatif — l'ennemi tire, tombe,
-ou gît — fait prendre son image à l'index absolu, sans passer par l'octant de direction.
+Un ennemi abattu **tombe** dans la direction du tir, à huit pas par image, puis reste au
+sol : il n'est plus un ennemi, ne bouge plus et n'arrête plus les tirs. La chute n'a pas
+une longueur fixe — elle s'arrête dès que l'image ne change plus, ce qui fait deux images
+pour les uns et trois pour les autres.
+
+Cinq des douze ennemis — WALK, EYE1, SKUL, TERM et SPID — n'ont **pas** d'animation de
+chute et **explosent** sur place. C'est leur dernière image de tir, égale à ce qui serait
+la première de leur chute, qui le dit. Ce qu'ils laissent dépend ensuite de leur
+explosion : le cadavre de l'ennemi pour les uns, la dernière image de l'explosion pour les
+autres. Dans tous les cas il reste quelque chose au sol.
+
+Ces trois comparaisons portent sur l'**identité** des images, pas sur leur contenu : le
+moteur d'origine compare des pointeurs, et la banque d'objets partage donc une seule
+instance par image, si souvent qu'elle soit citée.
+
+Un corps qui s'abat **n'encaisse plus rien**. Le tir s'arrête bien sur lui, mais ne le
+blesse ni ne le tue une seconde fois — `MSctrlobjcoll1` le dit en toutes lettres, *« se il
+nemico sta cadendo non deve ucciderlo di nuovo »*. Sans cela une rafale rend au corps un
+statut vivant en pleine chute : il cesse d'être mort sans redevenir vivant, se fige, et le
+rendu lui reprend une pose de marche — l'ennemi reste debout.
+
+Un statut négatif — l'ennemi tire, tombe, ou gît — fait prendre son image à l'index
+absolu, sans passer par l'octant de direction.
 
 Trois tentatives, comme dans l'original : la mort en consomme une et relance le niveau ;
 à court, la partie s'arrête et l'on revient au titre.

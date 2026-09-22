@@ -290,6 +290,12 @@ public final class Combat {
             return false;
         }
         if (nearest.definition().objectType() == ObjectDefinition.TYPE_ENEMY) {
+            // Un corps qui s'abat n'encaisse plus rien : le tir s'arrete sur lui, mais ne
+            // le blesse ni ne le tue une seconde fois. Sans cela il reprendrait un statut
+            // vivant et se figerait debout au milieu de sa chute.
+            if (EnemyAi.isFalling(nearest)) {
+                return true;
+            }
             if (nearest.damage(projectile.power())) {
                 // DestroyEnemy credite le deuxieme parametre du type abattu : de mille
                 // points pour le plus faible a vingt-cinq mille pour le plus coriace.
@@ -301,7 +307,6 @@ public final class Combat {
                 // Le corps tombe dans la direction du tir puis reste au sol. Sans
                 // animation de chute, il explose sur place.
                 if (!EnemyAi.kill(nearest, projectile.heading())) {
-                    nearest.collect();
                     explodeAt(nearest);
                 }
             } else {
@@ -399,20 +404,21 @@ public final class Combat {
     }
 
     /**
-     * Pose l'explosion d'un ennemi qui n'a pas d'animation de chute.
+     * Fait exploser un ennemi qui n'a pas d'animation de chute.
      *
-     * <p>{@code DEexpl} : l'objet prend l'explosion que declare son quatrieme parametre,
-     * recentree sur sa hauteur.
+     * <p>{@code DEexpl} : l'objet n'est pas retire. Il prend l'explosion que declare son
+     * quatrieme parametre, recentree sur sa hauteur, et garde memoire de ce qu'il etait —
+     * c'est ainsi qu'il pourra laisser un cadavre quand l'explosion sera finie.
      */
     private void explodeAt(SceneObject enemy) {
         ObjectDefinition definition = world.explosion(enemy.definition().param(4));
         if (definition == null || definition.frames().isEmpty()) {
+            enemy.collect();
             return;
         }
-        int y = enemy.y() + (enemy.definition().height() - definition.height()) / 2;
-        SceneObject explosion = new SceneObject(definition, enemy.x(), enemy.z(), y, 0, 0);
-        explosion.setSelfAnimated(true);
-        world.objects().add(explosion);
+        enemy.setY(enemy.y() + (enemy.definition().height() - definition.height()) / 2);
+        enemy.setSpeed(0);
+        enemy.becomeExplosion(definition);
     }
 
     /** Laisse une explosion a l'endroit de l'impact, si le tir en declare une. */
@@ -431,7 +437,23 @@ public final class Combat {
         world.objects().add(explosion);
     }
 
-    /** Fait vivre les explosions et retire celles qui ont fini de bruler. */
+    /** Image du cadavre d'un ennemi que l'explosion laisse au sol. {@code AOESrestien}. */
+    private static final int EXPLODED_REMAINS_FRAME = 128;
+
+    /**
+     * Fait vivre les explosions et decide de ce qu'elles laissent.
+     *
+     * <p>{@code AOEloop} : une explosion finie ne disparait pas toujours. Le deuxieme
+     * parametre de son type tranche, et seulement pour celle qui a remplace un ennemi —
+     * l'explosion d'un simple impact ne laisse jamais rien :
+     *
+     * <ul>
+     *   <li>negatif, {@code AOESrestien} : l'ennemi reprend son type et son image 128, le
+     *       cadavre au sol ;</li>
+     *   <li>positif, {@code AOESrestiexp} : la derniere image de l'explosion reste ;</li>
+     *   <li>nul : l'objet disparait.</li>
+     * </ul>
+     */
     private void advanceExplosions() {
         List<SceneObject> objects = world.objects();
         for (int i = objects.size() - 1; i >= 0; i--) {
@@ -440,10 +462,23 @@ public final class Combat {
                 continue;
             }
             int next = object.animCounter() + 1;
-            if (next >= object.definition().frames().size()) {
-                objects.remove(i);
-            } else {
+            if (next < object.definition().frames().size()) {
                 object.setAnimCounter(next);
+                continue;
+            }
+
+            int leaves = object.hasPreviousDefinition() ? object.definition().param(2) : 0;
+            if (leaves == 0) {
+                objects.remove(i);
+                continue;
+            }
+            object.setSelfAnimated(false);
+            object.setRemains(true);
+            if (leaves < 0) {
+                object.restorePreviousDefinition();
+                object.setAnimCounter(EXPLODED_REMAINS_FRAME);
+            } else {
+                object.setAnimCounter(object.definition().frames().size() - 1);
             }
         }
     }

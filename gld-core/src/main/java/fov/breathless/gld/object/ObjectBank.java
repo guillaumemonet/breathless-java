@@ -5,6 +5,7 @@ import fov.breathless.gld.GldContainer;
 import fov.breathless.gld.GldFormatException;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -144,9 +145,17 @@ public final class ObjectBank {
             }
         }
 
+        // Un meme offset repete donne une seule image, partagee par toutes ses entrees.
+        // Ce n'est pas qu'une economie : le moteur d'origine compare les *pointeurs* de la
+        // liste pour savoir ou s'arrete une animation — deux entrees egales marquent la
+        // fin de la chute (CEDcaduta), et l'egalite des images 41 et 42 dit qu'un type
+        // n'a pas d'animation de chute du tout (DestroyEnemy). Lire chaque entree
+        // separement rendrait ces comparaisons toujours fausses.
+        Map<Integer, ObjectFrame> byOffset = new HashMap<>();
         List<ObjectFrame> frames = new ArrayList<>(offsets.size());
         for (int offset : offsets) {
-            frames.add(readFrame(gld, name, start + offset, limit, source));
+            frames.add(byOffset.computeIfAbsent(offset,
+                    o -> readFrame(gld, name, start + o, limit, source)));
         }
 
         return new ObjectDefinition(name, frameCount, radius, height, animType, objectType,

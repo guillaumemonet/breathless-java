@@ -10,7 +10,14 @@ import fov.breathless.gld.object.ObjectDefinition;
  */
 public final class SceneObject {
 
-    private final ObjectDefinition definition;
+    /**
+     * Type courant. {@code obj_image} : il change quand un ennemi explose, puis revient
+     * quand l'explosion laisse un cadavre.
+     */
+    private ObjectDefinition definition;
+
+    /** Type d'avant l'explosion, {@code obj_oldimage}, ou {@code null}. */
+    private ObjectDefinition previousDefinition;
     private int x;
     private int z;
     private int y;
@@ -40,6 +47,33 @@ public final class SceneObject {
 
     public ObjectDefinition definition() {
         return definition;
+    }
+
+    /**
+     * L'objet prend la place d'une explosion, en gardant memoire de ce qu'il etait.
+     *
+     * <p>{@code DEexpl} : l'ennemi abattu n'est pas retire, son type est remplace par
+     * celui de l'explosion et l'ancien est mis de cote — c'est lui qui dira, une fois
+     * l'explosion finie, s'il reste un cadavre.
+     */
+    public void becomeExplosion(ObjectDefinition explosion) {
+        this.previousDefinition = definition;
+        this.definition = explosion;
+        this.animCounter = 0;
+        this.selfAnimated = true;
+    }
+
+    /** Rend a l'objet le type qu'il avait avant d'exploser. */
+    public void restorePreviousDefinition() {
+        if (previousDefinition != null) {
+            this.definition = previousDefinition;
+            this.previousDefinition = null;
+        }
+    }
+
+    /** L'objet etait-il autre chose avant d'exploser ? */
+    public boolean hasPreviousDefinition() {
+        return previousDefinition != null;
     }
 
     public int x() {

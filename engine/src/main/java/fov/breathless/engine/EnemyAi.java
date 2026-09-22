@@ -368,6 +368,18 @@ public final class EnemyAi {
         enemy.setStatus(HURT);
     }
 
+    /**
+     * L'ennemi est-il deja en train de s'abattre ?
+     *
+     * <p>{@code MSctrlobjcoll1} porte la remarque en toutes lettres : « se il nemico sta
+     * cadendo non deve ucciderlo di nuovo ». Un corps qui tombe n'encaisse plus rien — le
+     * blesser lui rendrait un statut vivant, et il se figerait debout au milieu de sa
+     * chute.
+     */
+    public static boolean isFalling(SceneObject enemy) {
+        return enemy.status() == DEAD;
+    }
+
     /** Un ennemi abattu bascule dans son animation de chute. */
     /**
      * Abat un ennemi.

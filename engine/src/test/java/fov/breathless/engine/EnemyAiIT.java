@@ -21,6 +21,7 @@ import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -255,6 +256,34 @@ class EnemyAiIT {
         assertEquals(129, enemy.animCounter(), "l'image du corps au sol n'est pas la bonne");
         assertEquals(0, enemy.speed(), "le corps glisse encore");
         assertFalse(enemy.isCollected(), "le corps doit rester visible");
+    }
+
+    @Test
+    @DisplayName("Un ennemi sans animation de chute explose et ne joue aucune pose de marche")
+    void enemiesWithoutFallAnimationExplode() throws IOException {
+        Fixture fixture = fixture();
+        Level level = fixture.levels().get(0);
+
+        // Cinq des douze ennemis sont dans ce cas : leur derniere image de tir est aussi
+        // la premiere de leur chute, ce qui dans l'original veut dire « pas de chute ».
+        ObjectDefinition kind = null;
+        for (ObjectDefinition definition : fixture.objects().objects().values()) {
+            if (definition.objectType() == ObjectDefinition.TYPE_ENEMY
+                    && definition.frames().size() > 42
+                    && definition.frames().get(41) == definition.frames().get(42)) {
+                kind = definition;
+                break;
+            }
+        }
+        Assumptions.assumeTrue(kind != null, "aucun ennemi sans animation de chute");
+
+        SceneObject enemy = new SceneObject(kind, 0, 0, 0, 0, 0);
+        assertFalse(EnemyAi.kill(enemy, 512),
+                kind.name() + " ne devrait pas entamer de chute");
+        // Sans ce refus, l'ennemi prendrait les images 42 a 44 — qui pour lui ne sont que
+        // des poses de marche, et non une mort.
+        assertNotEquals(42, enemy.animCounter(),
+                "il ne doit pas basculer sur une pose de marche en guise de mort");
     }
 
     @Test

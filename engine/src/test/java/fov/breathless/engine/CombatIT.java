@@ -23,6 +23,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -460,5 +461,105 @@ class CombatIT {
             }
         }
         throw new AssertionError("aucun ennemi dans les vingt niveaux");
+    }
+
+    @Test
+    @DisplayName("Chacun des douze ennemis laisse au sol ce que ses donnees prescrivent")
+    void everyEnemyLeavesTheRightRemains() throws IOException {
+        Fixture fixture = fixture();
+        Level level = fixture.levels().get(0);
+
+        int checked = 0;
+        for (ObjectDefinition kind : fixture.objects().objects().values()) {
+            if (kind.objectType() != ObjectDefinition.TYPE_ENEMY || kind.radius() == 0) {
+                continue;
+            }
+            World world = new World(level, fixture.textures(), fixture.gfx(), fixture.objects());
+            Camera camera = Camera.atPlayerStart(level);
+
+            int[][] cardinals = {{1, 0, 0}, {0, 1, 512}, {-1, 0, 1024}, {0, -1, 1536}};
+            int stepX = 0;
+            int stepZ = 0;
+            boolean found = false;
+            for (int[] cardinal : cardinals) {
+                int x = camera.cellX() + cardinal[0];
+                int z = camera.cellZ() + cardinal[1];
+                if (x >= 0 && z >= 0 && x < Level.MAP_SIZE && z < Level.MAP_SIZE
+                        && !level.isVoid(x, z) && !level.isWall(x, z)) {
+                    stepX = cardinal[0];
+                    stepZ = cardinal[1];
+                    camera.setHeading(cardinal[2]);
+                    found = true;
+                    break;
+                }
+            }
+            Assumptions.assumeTrue(found, "pas de case degagee devant le point de depart");
+
+            SceneObject target = new SceneObject(kind,
+                    (camera.x() >> 16) + stepX * 90, (camera.z() >> 16) + stepZ * 90,
+                    world.floorHeight(level.blockIndex(camera.cellX(), camera.cellZ())), 0, 0);
+            target.setStrength(1);
+            world.objects().clear();
+            world.objects().add(target);
+
+            Combat combat = new Combat(world, new Weapons(fixture.objects()),
+                    new PlayerState(), fixture.objects());
+            EnemyAi ai = new EnemyAi(world);
+            PlayerState state = new PlayerState();
+            int playerBlock = level.blockIndex(camera.cellX(), camera.cellZ());
+
+            // En rafale : les tirs suivants arrivent pendant que le corps s'abat. Ils ne
+            // doivent ni le blesser ni le tuer une seconde fois, faute de quoi il
+            // reprendrait un statut vivant et se figerait debout au milieu de sa chute.
+            PlayerInput input = new PlayerInput();
+            for (int tick = 0; tick < 160; tick++) {
+                boolean shooting = tick < 12;
+                input.fire = shooting;
+                input.firePresses = shooting ? 1 : 0;
+                combat.update(camera, input, playerBlock);
+                ai.update(camera, state, combat);
+            }
+
+            String id = kind.name();
+            assertTrue(target.strength() <= 0, id + " : l'ennemi n'a pas ete abattu");
+            assertFalse(target.isCollected(), id + " : le corps a disparu de la scene");
+            assertTrue(target.isRemains(), id + " : le corps n'est jamais arrive au sol");
+            // Un statut redevenu positif, c'est un corps fige debout : le rendu reprend
+            // alors une pose de marche au lieu de l'image du cadavre.
+            assertTrue(target.status() < 0,
+                    id + " : le corps a repris un statut vivant (" + target.status() + ")");
+
+            boolean falls = kind.frames().get(41) != kind.frames().get(42);
+            if (falls) {
+                // La chute se termine sur l'image 129, CEDcadutaend.
+                assertEquals(129, target.animCounter(),
+                        id + " : une chute doit finir sur l'image du corps au sol");
+                assertSame(kind, target.definition(),
+                        id + " : un ennemi qui tombe garde son type");
+            } else {
+                // Sinon l'ennemi explose, et le deuxieme parametre de l'explosion tranche :
+                // negatif, il reprend son type et l'image 128 ; positif, la derniere image
+                // de l'explosion reste.
+                ObjectDefinition blast = world.explosion(kind.param(4));
+                assertNotNull(blast, id + " : explosion introuvable");
+                if (blast.param(2) < 0) {
+                    assertSame(kind, target.definition(),
+                            id + " : l'ennemi devrait reprendre son type");
+                    assertEquals(128, target.animCounter(),
+                            id + " : l'image du corps explose n'est pas la bonne");
+                } else {
+                    assertSame(blast, target.definition(),
+                            id + " : la derniere image de l'explosion devrait rester");
+                    assertEquals(blast.frames().size() - 1, target.animCounter(),
+                            id + " : ce n'est pas la derniere image de l'explosion");
+                }
+                // Et surtout : jamais les images 42 a 44, qui pour lui ne sont que des
+                // poses de marche.
+                assertTrue(target.animCounter() < 42 || target.animCounter() > 44,
+                        id + " : mort jouee sur une pose de marche");
+            }
+            checked++;
+        }
+        assertEquals(12, checked, "les douze ennemis du jeu devraient etre passes en revue");
     }
 }

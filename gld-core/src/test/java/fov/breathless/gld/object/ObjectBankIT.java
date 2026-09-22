@@ -12,8 +12,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -132,5 +134,67 @@ class ObjectBankIT {
         }
         assertEquals(20, levels);
         assertTrue(checked > 0, "aucune reference d'objet verifiee");
+    }
+
+    @Test
+    @DisplayName("Une image citee deux fois n'est lue qu'une fois, et l'instance est partagee")
+    void repeatedFramesShareOneInstance() throws IOException {
+        ObjectBank bank = bank();
+
+        // Le moteur d'origine compare les *pointeurs* de la liste d'images pour savoir ou
+        // s'arrete une animation. Lire chaque entree separement rendrait ces comparaisons
+        // toujours fausses : il faut que deux entrees egales donnent la meme instance.
+        boolean sawRepeat = false;
+        for (ObjectDefinition object : bank.objects().values()) {
+            List<ObjectFrame> frames = object.frames();
+            IdentityHashMap<ObjectFrame, Integer> distinct = new IdentityHashMap<>();
+            for (ObjectFrame frame : frames) {
+                distinct.putIfAbsent(frame, distinct.size());
+            }
+            if (distinct.size() < frames.size()) {
+                sawRepeat = true;
+            }
+        }
+        assertTrue(sawRepeat,
+                "aucune image repetee : les instances ne sont donc pas partagees");
+    }
+
+    @Test
+    @DisplayName("Cinq des douze ennemis n'ont pas d'animation de chute et explosent")
+    void someEnemiesHaveNoFallAnimation() throws IOException {
+        ObjectBank bank = bank();
+
+        // DestroyEnemy : la derniere image de tir egale la premiere de chute veut dire
+        // qu'il n'y a pas de chute du tout, et que l'ennemi explose sur place.
+        List<String> falling = new ArrayList<>();
+        List<String> exploding = new ArrayList<>();
+        for (ObjectDefinition enemy : bank.objects().values()) {
+            if (enemy.objectType() != ObjectDefinition.TYPE_ENEMY) {
+                continue;
+            }
+            List<ObjectFrame> frames = enemy.frames();
+            assertTrue(frames.size() > 42, enemy.name() + " : trop peu d'images");
+            if (frames.get(41) == frames.get(42)) {
+                exploding.add(enemy.name());
+            } else {
+                falling.add(enemy.name());
+            }
+        }
+
+        assertEquals(Set.of("WALK", "EYE1", "SKUL", "TERM", "SPID"), Set.copyOf(exploding),
+                "ce sont ces cinq ennemis qui explosent plutot que de tomber");
+        assertEquals(7, falling.size(), "les sept autres tombent");
+
+        // Et la chute s'arrete des que l'image ne change plus : deux images pour les uns,
+        // trois pour les autres — jamais un compte fixe.
+        for (String name : falling) {
+            List<ObjectFrame> frames = bank.get(name).frames();
+            int last = 42;
+            while (last < 44 && frames.get(last) != frames.get(last + 1)) {
+                last++;
+            }
+            assertTrue(last == 43 || last == 44,
+                    name + " : chute de longueur inattendue (42.." + last + ")");
+        }
     }
 }

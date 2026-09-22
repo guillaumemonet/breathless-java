@@ -101,6 +101,24 @@ Les effets 1, 9, 10 et 18 du catalogue ne sont utilisés par aucun niveau.
 
 La spécification des formats binaires est dans [`docs/formats-gld.md`](docs/formats-gld.md).
 
+## Installer
+
+La page des [releases](https://github.com/guillaumemonet/breathless-java/releases) porte
+une archive par système. Il n'y a rien à installer : on décompresse, et on lance
+`Breathless`. Le paquet porte son propre Java, aucun n'est requis sur la machine.
+
+**Les données du jeu n'y sont pas** — ce dépôt n'en redistribue aucune. Au premier
+lancement, le jeu demande s'il peut aller chercher l'archive des sources d'origine,
+[mheyer32/Breathless](https://github.com/mheyer32/Breathless), soit environ 2,5 Mo. Il la
+range une fois pour toutes dans le répertoire de l'utilisateur — `%LOCALAPPDATA%\Breathless\data`
+sous Windows, `~/Library/Application Support/Breathless/data` sous macOS,
+`~/.local/share/breathless/data` sous Linux — et les lancements suivants la retrouvent
+sans rien demander.
+
+Une copie locale l'emporte toujours, dans cet ordre : le répertoire donné en argument, la
+propriété `-Dbreathless.data=<chemin>`, l'archive posée à côté du jeu, puis celle qu'un
+lancement précédent a rangée. Qui a déjà les sources n'a donc rien à télécharger.
+
 ## Construire et lancer
 
 Nécessite un JDK 21 (le *toolchain* Gradle s'en charge).
@@ -144,6 +162,19 @@ gradle cli --args="sprites <chemin vers les .GLD> <répertoire de sortie>"
 # Rendu de vues fixes depuis le point de départ d'un niveau
 gradle cli --args="render <chemin vers les .GLD> <chemin>/BLES0006.GLD <sortie>"
 ```
+
+### Construire le paquet
+
+```bash
+gradle :game:packageZip
+```
+
+`jpackage` produit un répertoire autonome, avec son propre JRE et l'exécutable du jeu, que
+la tâche compresse dans `game/build/distributions`. Il ne se construit que pour le système
+qui le fabrique : c'est une contrainte de `jpackage`, pas un choix.
+
+Le runtime est réduit aux modules réellement employés, et seuls les natifs LWJGL du
+système visé sont embarqués — sans quoi l'archive pèserait le double.
 
 ### Jouer
 
@@ -462,8 +493,9 @@ Les sources de **Breathless** (Fields of Vision, 1995-96) ont été publiées en
 le magazine *Amiresource*. Le `Leggimi.txt` d'origine demande qu'un produit qui en dérive
 soit lui-même rigoureusement freeware, sans profit direct ni indirect.
 
-**Ce dépôt est freeware.** Il ne contient pas les données du jeu : il faut les fournir
-soi-même.
+**Ce dépôt est freeware.** Il ne contient pas les données du jeu, et les paquets publiés
+non plus : rien n'est redistribué. Le jeu va chercher l'archive des sources là où ses
+auteurs l'ont publiée, et seulement si on le lui accorde.
 
 Le lecteur de modules P61A livré dans les sources est de Jarno Paananen. Ce portage ne
 l'emploie pas : son décodeur réimplémente le *format* d'après la description publique de

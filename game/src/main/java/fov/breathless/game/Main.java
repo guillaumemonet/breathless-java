@@ -4,7 +4,6 @@ import com.jme3.system.AppSettings;
 import fov.breathless.engine.LevelCode;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
@@ -105,6 +104,14 @@ public final class Main {
         ".", "..", "../..",
     };
 
+    /**
+     * Ou prendre les donnees.
+     *
+     * <p>Une copie locale l'emporte toujours, dans cet ordre : le repertoire donne en
+     * argument, la propriete {@code breathless.data}, l'archive posee a cote du jeu, puis
+     * celle qu'un lancement precedent a rangee. A defaut, le jeu propose d'aller la
+     * chercher — c'est le cas du paquet distribue, qui ne contient pas les donnees.
+     */
     private static Path dataDirectory(String[] args) {
         if (args.length > 0) {
             return Path.of(args[0]);
@@ -115,23 +122,15 @@ public final class Main {
         }
         for (String candidate : CANDIDATES) {
             Path path = Path.of(candidate);
-            if (holdsGameData(path)) {
+            if (DataStore.holdsGameData(path)) {
                 return path;
             }
         }
-        return Path.of("Breathless");
-    }
-
-    /** Un repertoire de donnees contient le fichier maitre du jeu. */
-    private static boolean holdsGameData(Path directory) {
-        if (!Files.isDirectory(directory)) {
-            return false;
+        Path stored = DataStore.localDirectory();
+        if (DataStore.holdsGameData(stored)) {
+            return stored;
         }
-        try (var stream = Files.list(directory)) {
-            return stream.anyMatch(file ->
-                    file.getFileName().toString().equalsIgnoreCase("Breathless.gld"));
-        } catch (IOException e) {
-            return false;
-        }
+        Path fetched = FirstRun.obtain();
+        return (fetched != null) ? fetched : Path.of("Breathless");
     }
 }

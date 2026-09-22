@@ -148,6 +148,74 @@ class EffectsIT {
         throw new AssertionError("aucune porte exploitable dans les vingt niveaux");
     }
 
+    /**
+     * Chaque effet d'ouverture bouge le plan que l'original bouge, et lui seul.
+     *
+     * <p>Les trois portes du catalogue ne se ressemblent pas : {@code DoorUp} leve le
+     * plafond, {@code Door2} — la porte « a due ante » — leve le plafond <em>et</em>
+     * abaisse le sol, {@code DoorDown} abaisse le sol seul. Confondre les deux dernieres
+     * avec la premiere donne une porte qui s'etire sans jamais s'ouvrir.
+     */
+    @Test
+    @DisplayName("Chaque sorte de porte bouge le plan que l'original lui donne")
+    void eachKindOfDoorMovesItsOwnSurface() throws IOException {
+        Fixture fixture = fixture();
+
+        // effet -> deplacement attendu du plafond et du sol, par unite d'ouverture.
+        int[][] expected = {
+            {5, +1, 0},     // DoorUp : le plafond se leve
+            {6, +1, -1},    // Door2 : les deux battants s'ecartent
+            {12, 0, -1},    // DoorDown : le sol s'abaisse
+            {7, 0, +1},     // FloorUpDown : le sol se leve
+            {8, 0, -1},     // FloorDownUp : le sol s'abaisse
+        };
+
+        int checked = 0;
+        for (int[] expect : expected) {
+            int effect = expect[0];
+            boolean seen = false;
+
+            for (Level level : fixture.levels()) {
+                int list = findList(level, effect);
+                if (list < 0) {
+                    continue;
+                }
+                EffectEntry entry = entryOf(level, list, effect);
+                List<Integer> blocks = blocksOf(level, entry.trigger());
+                if (blocks.isEmpty() || entry.param1() <= 0) {
+                    continue;
+                }
+
+                World world = world(fixture, level);
+                Effects effects = new Effects(world);
+                int sample = blocks.get(0);
+                int ceilBefore = world.ceilHeight(sample);
+                int floorBefore = world.floorHeight(sample);
+
+                effects.trigger(list);
+                for (int tick = 0; tick < entry.param1(); tick++) {
+                    effects.update(1, -1, world.objects());
+                }
+
+                String id = level.name() + " effet " + effect;
+                assertEquals(ceilBefore + expect[1] * entry.param1(),
+                        world.ceilHeight(sample), id + " : plafond");
+                assertEquals(floorBefore + expect[2] * entry.param1(),
+                        world.floorHeight(sample), id + " : sol");
+
+                // Une ouverture laisse toujours le plafond au-dessus du sol : l'inverse
+                // est un bloc retourne, que rien ne sait dessiner.
+                assertTrue(world.ceilHeight(sample) > world.floorHeight(sample),
+                        id + " : le plafond est passe sous le sol");
+                seen = true;
+                checked++;
+                break;
+            }
+            assertTrue(seen, "aucun niveau n'emploie l'effet " + effect);
+        }
+        assertEquals(expected.length, checked, "toutes les sortes doivent etre verifiees");
+    }
+
     @Test
     @DisplayName("Une porte refuse de se refermer sur le joueur")
     void doorWillNotCloseOnThePlayer() throws IOException {

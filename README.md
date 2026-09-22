@@ -74,6 +74,12 @@ des blocs issus du fichier, qui restent la description d'origine intacte.
 
 Une porte refuse de se refermer tant que le joueur se tient dessous.
 
+Les trois sortes de portes ne se ressemblent pas, et c'est le plan qu'elles déplacent qui
+les distingue : **`DoorUp`** lève le plafond, **`Door2`** — la porte « a due ante », à deux
+battants — lève le plafond *et* abaisse le sol d'autant, **`DoorDown`** abaisse le sol
+seul. Le niveau 1 en compte huit, quatre de chaque sorte extrême ; les portes à deux
+battants n'apparaissent qu'à partir du quatrième niveau.
+
 ### Les animations
 
 Deux cadences, toutes deux plus lentes que l'affichage :

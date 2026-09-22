@@ -448,10 +448,11 @@ public final class Effects {
             case FLOOR_UP -> oneWay(slot, ticks, blocks, false, +1);
             case CEIL_DOWN -> oneWay(slot, ticks, blocks, true, -1);
             case FLOOR_DOWN -> oneWay(slot, ticks, blocks, false, -1);
-            case DOOR, DOOR2 -> cycle(slot, ticks, blocks, true, +1, playerBlock);
-            case LIFT_UP -> cycle(slot, ticks, blocks, false, +1, playerBlock);
-            case LIFT_DOWN -> cycle(slot, ticks, blocks, false, -1, playerBlock);
-            case DOOR_DOWN -> cycle(slot, ticks, blocks, true, -1, playerBlock);
+            case DOOR -> cycle(slot, ticks, blocks, Motion.DOOR_OPENS, playerBlock);
+            case DOOR2 -> cycle(slot, ticks, blocks, Motion.DOUBLE_DOOR_OPENS, playerBlock);
+            case LIFT_UP -> cycle(slot, ticks, blocks, Motion.FLOOR_RISES, playerBlock);
+            case LIFT_DOWN -> cycle(slot, ticks, blocks, Motion.FLOOR_SINKS, playerBlock);
+            case DOOR_DOWN -> cycle(slot, ticks, blocks, Motion.FLOOR_SINKS, playerBlock);
             case BLINKING_LIGHT -> blink(slot, ticks, blocks);
             case LIGHT_UP -> light(slot, ticks, blocks, +1);
             case LIGHT_DOWN -> light(slot, ticks, blocks, -1);
@@ -487,17 +488,16 @@ public final class Effects {
      *
      * <p>Une pause nulle laisse l'effet ouvert definitivement.
      */
-    private void cycle(Slot slot, int ticks, int[] blocks, boolean ceiling, int direction,
-                       int playerBlock) {
+    private void cycle(Slot slot, int ticks, int[] blocks, Motion motion, int playerBlock) {
         switch (slot.status) {
             case STATE_NEW -> {
                 slot.status = STATE_OUT;
                 slot.counter = slot.param1;
                 // StartDoorSoundFX : le moteur d'origine lance ici le bruit de porte.
                 sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_DOOR_START);
-                cycleOut(slot, ticks, blocks, ceiling, direction);
+                cycleOut(slot, ticks, blocks, motion);
             }
-            case STATE_OUT -> cycleOut(slot, ticks, blocks, ceiling, direction);
+            case STATE_OUT -> cycleOut(slot, ticks, blocks, motion);
             case STATE_PAUSE -> {
                 // Le joueur present sous la porte suspend le decompte.
                 if (!contains(blocks, playerBlock)) {
@@ -510,10 +510,10 @@ public final class Effects {
             }
             case STATE_BACK -> {
                 int step = Math.min(ticks, slot.counter);
-                move(blocks, ceiling, -direction * step);
+                move(blocks, motion, -step);
                 if (contains(blocks, playerBlock)) {
                     // Le joueur s'est glisse dessous : on remet tout en place et on attend.
-                    move(blocks, ceiling, direction * step);
+                    move(blocks, motion, step);
                     return;
                 }
                 slot.counter -= step;
@@ -525,9 +525,9 @@ public final class Effects {
         }
     }
 
-    private void cycleOut(Slot slot, int ticks, int[] blocks, boolean ceiling, int direction) {
+    private void cycleOut(Slot slot, int ticks, int[] blocks, Motion motion) {
         int step = Math.min(ticks, slot.counter);
-        move(blocks, ceiling, direction * step);
+        move(blocks, motion, step);
         slot.counter -= step;
         if (slot.counter <= 0) {
             if (slot.param2 == 0) {
@@ -635,6 +635,43 @@ public final class Effects {
                 world.moveFloor(block, delta);
             }
         }
+    }
+
+    /**
+     * Deplace le plafond et le sol d'un meme pas.
+     *
+     * <p>Les deux ne sont pas exclusifs : une porte a deux battants ecarte le plafond et le
+     * sol en meme temps.
+     */
+    private void move(int[] blocks, Motion motion, int step) {
+        move(blocks, true, motion.ceiling() * step);
+        move(blocks, false, motion.floor() * step);
+    }
+
+    /**
+     * Ce qu'un effet fait bouger, et dans quel sens, par pas d'ouverture.
+     *
+     * <p>Le moteur d'origine ne donne pas a chaque effet une surface et un sens, mais une
+     * paire de deplacements : {@code Door2} — la porte « a due ante » — leve le plafond
+     * <em>et</em> abaisse le sol, et {@code DoorDown} touche le sol seul la ou une porte
+     * ordinaire touche le plafond seul.
+     *
+     * @param ceiling deplacement du plafond a l'ouverture, en pas
+     * @param floor   deplacement du sol a l'ouverture, en pas
+     */
+    private record Motion(int ceiling, int floor) {
+
+        /** Porte ordinaire, {@code DoorUp} : le plafond se leve. */
+        static final Motion DOOR_OPENS = new Motion(+1, 0);
+
+        /** Porte a deux battants, {@code Door2} : le plafond se leve et le sol s'abaisse. */
+        static final Motion DOUBLE_DOOR_OPENS = new Motion(+1, -1);
+
+        /** {@code DoorDown} et {@code FloorDownUp} : le sol s'abaisse. */
+        static final Motion FLOOR_SINKS = new Motion(0, -1);
+
+        /** {@code FloorUpDown} : le sol se leve. */
+        static final Motion FLOOR_RISES = new Motion(0, +1);
     }
 
     private static boolean contains(int[] blocks, int blockIndex) {

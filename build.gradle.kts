@@ -23,7 +23,13 @@ subprojects {
     tasks.withType<Test>().configureEach {
         useJUnitPlatform()
         // Permet de pointer les donnees d'origine : gradle test -Dbreathless.data=<chemin>
-        System.getProperty("breathless.data")?.let { systemProperty("breathless.data", it) }
+        // Le chemin est resolu depuis la racine du projet, et non depuis le repertoire du
+        // module : sans cela un chemin relatif ne designe rien pour les tests, qui se
+        // contentent alors de s'ignorer — une compilation toute verte sans avoir rien
+        // verifie.
+        System.getProperty("breathless.data")?.let {
+            systemProperty("breathless.data", rootProject.file(it).absolutePath)
+        }
     }
 
     dependencies {

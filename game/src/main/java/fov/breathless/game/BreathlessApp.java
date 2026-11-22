@@ -125,6 +125,12 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     /** Images restant a afficher avant de passer, ou 0 si l'on attend une touche. */
     private int screenTicks;
 
+    /** Images ecoulees depuis l'affichage de l'ecran fixe. */
+    private int screenAge;
+
+    /** Images pendant lesquelles un ecran fixe ignore les touches. */
+    private static final int SCREEN_GRACE = 10;
+
     /** Ce qu'il faudra faire quand le joueur aura valide l'ecran fixe. */
     private Runnable afterScreen;
 
@@ -214,7 +220,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
 
     /**
      * Dit sur quelle carte la fenetre s'est ouverte et, si c'est la carte integree d'une
-     * machine qui en a une autre, demande avant de continuer â€” voir {@link GpuCheck}.
+     * machine qui en a une autre, demande avant de continuer — voir {@link GpuCheck}.
      */
     private void checkGpu() {
         String gl = GpuCheck.renderer();
@@ -370,7 +376,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         });
     }
 
-    /** Retour a la presentation : apres la fin de partie, la fin du jeu, ou Â« QUIT GAME Â». */
+    /** Retour a la presentation : apres la fin de partie, la fin du jeu, ou « QUIT GAME ». */
     private void goToPresentation() {
         presentation = true;
         paused = false;
@@ -381,7 +387,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     }
 
     /**
-     * Â« START GAME Â» : une partie neuve, au niveau que dit le code d'acces.
+     * « START GAME » : une partie neuve, au niveau que dit le code d'acces.
      *
      * <p>{@code LevelCodeIn} : le code de depart mene au premier niveau, un autre code au
      * niveau qu'il porte, dans l'etat qu'il porte.
@@ -408,8 +414,8 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
      * touche, sur la musique du niveau.
      *
      * <p>{@code LoadingScreen} (Presentation.asm) : l'image du niveau, le nom du monde et
-     * celui de l'arene en haut, les tentatives restantes, le code d'acces â€” sauf au tout
-     * premier niveau â€”, et Â« PRESS ANY KEY TO START Â» avec son ombre, sur la musique
+     * celui de l'arene en haut, les tentatives restantes, le code d'acces — sauf au tout
+     * premier niveau —, et « PRESS ANY KEY TO START » avec son ombre, sur la musique
      * {@code MUSL}.
      */
     private void prepareLevel(int index, boolean playAgain) {
@@ -445,7 +451,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     /**
      * La sequence de mort est finie : une tentative de moins. S'il en reste, on reprend
      * le niveau dans l'etat ou on y est entre ({@code TMretr}) ; sinon la banniere de fin
-     * de partie, puis la presentation â€” le code d'acces reste celui du niveau atteint.
+     * de partie, puis la presentation — le code d'acces reste celui du niveau atteint.
      */
     private void playerDied() {
         retries--;
@@ -657,6 +663,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         }
         screenPicture = picture;
         screenTicks = ticks;
+        screenAge = 0;
         afterScreen = next;
     }
 
@@ -664,7 +671,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
      * Touches par defaut des commandes redefinissables.
      *
      * <p>Les commandes sont celles de {@code conf_page3}. Les touches, elles, suivent les
-     * habitudes d'aujourd'hui plutot que celles de l'original â€” Alt gauche pour tirer, Ctrl
+     * habitudes d'aujourd'hui plutot que celles de l'original — Alt gauche pour tirer, Ctrl
      * pour courir, Maj pour le pas de cote force : la page du clavier permet d'y revenir.
      */
     private static final Object[][] DEFAULT_KEYS = {
@@ -764,7 +771,7 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
 
     /**
      * Ecoute les touches brutes : redefinition d'une commande, saisie du code d'acces,
-     * reponse a Â« REALLY QUIT ? (Y/N) Â».
+     * reponse a « REALLY QUIT ? (Y/N) ».
      *
      * <p>Ces trois saisies prennent la prochaine touche telle quelle, et non une liaison.
      */
@@ -908,10 +915,10 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
     }
 
     /**
-     * Les touches secondaires : le meme nom que la commande, suffixe de Â« 2 Â».
+     * Les touches secondaires : le meme nom que la commande, suffixe de « 2 ».
      *
      * <p>La liste est explicite, et non deduite du suffixe : d'autres commandes finissent
-     * par un chiffre sans etre des doublons â€” {@code arme-2} est la troisieme arme, et la
+     * par un chiffre sans etre des doublons — {@code arme-2} est la troisieme arme, et la
      * retailler en {@code arme-} la rendait illisible.
      */
     private static final java.util.Set<String> SECONDARY_ACTIONS = java.util.Set.of(
@@ -933,7 +940,11 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         // Sur un ecran fixe, une touche passe a la suite ; le titre ouvre le menu.
         if (pressed && screenPicture != null && !configMenu.isOpen()
                 && !name.startsWith("fenetre") && !name.startsWith("pixel")) {
-            dismissScreen();
+            // Une touche tout juste pressee pour quitter le menu ne doit pas emporter
+            // aussi l'ecran qui le suit : il ne se ferme qu'apres quelques images.
+            if (screenAge >= SCREEN_GRACE) {
+                dismissScreen();
+            }
             return;
         }
         switch (name) {
@@ -1182,11 +1193,12 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         // Avant tout dessin : le menu a pu changer la taille de la vue depuis la derniere
         // image, et {@code blitView} lit la taille reglee en meme temps que le tampon
         // rendu. Les reconstruire apres coup laisserait une image ou les deux ne
-        // s'accordent pas â€” et un tampon plus grand que l'ecran deborde.
+        // s'accordent pas — et un tampon plus grand que l'ecran deborde.
         applySettings();
 
         if (screenPicture != null) {
             accumulator = 0;
+            screenAge++;
             if (configMenu.isOpen()) {
                 configMenu.advance(1);
             } else if (screenTicks > 0 && --screenTicks == 0) {

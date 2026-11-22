@@ -261,6 +261,13 @@ s'il reste des tentatives ; sinon la bannière de fin de partie, puis le titre �
 d'accès reste celui du dernier niveau atteint. Les crédits, l'écran final et la bannière
 passent seuls au bout de leur temps, une touche les abrège.
 
+![Écran de chargement](docs/images/chargement.png)
+
+Les textes de l'écran de chargement sont posés où `LoadingScreen` les pose, dans les
+couleurs 254 et 255 de la palette de l'image — d'où le rouge de « PRESS ANY KEY TO
+START ». Le premier niveau du premier monde n'affiche pas de code : c'est le code de
+départ.
+
 ### La fenêtre de jeu
 
 ![Fenêtre réduite, gros pixels](docs/images/fenetre-reduite.png)
@@ -376,10 +383,10 @@ menu en attente, la touche suivante est affectée, et la commande qui l'employai
 Les touches réservées — Tab, Échap, P, 1 à 6, F1 à F6 et les touches fixes du portage —
 sont refusées, comme `keylist` les refusait. Échap abandonne.
 
+![Redéfinition des touches](docs/images/clavier.png)
+
 La page **contrôles** règle l'inertie de la marche et de la rotation, et les vitesses, à
 pied et en course, comme `AdjustConfigVars` les traduisait.
-
-![Redéfinition des touches](docs/images/clavier.png)
 
 La page **options de jeu**, avant la partie, laisse **saisir** le code d'accès — vérifié,
 « BAD ACCESS CODE ! » sinon —, le remettre au code de départ, et enregistrer les réglages

@@ -201,6 +201,38 @@ qui le fabrique : c'est une contrainte de `jpackage`, pas un choix.
 Le runtime est réduit aux modules réellement employés, et seuls les natifs LWJGL du
 système visé sont embarqués — sans quoi l'archive pèserait le double.
 
+### Android
+
+La release porte aussi un **APK**, pour Android 14 ou plus récent. Il s'installe hors
+boutique : autoriser l'installation d'applications de cette source, puis ouvrir le
+fichier. Comme sur le poste de travail, il ne contient aucune donnée du jeu et propose de
+les télécharger au premier lancement ; elles sont rangées dans le stockage de
+l'application.
+
+L'image garde ses proportions au centre de l'écran, en paysage, et les commandes tactiles
+occupent les bandes laissées libres :
+
+| Commande | Action |
+|---|---|
+| Joystick, à gauche | avancer, reculer, tourner ; poussé à fond, courir ; dans un menu, déplacer le choix |
+| TIR, ACTION, ARME, CARTE, MENU, à droite | comme au clavier |
+| Toucher l'image | passer un écran fixe, valider un choix de menu |
+| Retour | menu |
+
+À « REALLY QUIT ? », faute de touches Y et N, ACTION répond oui et MENU non.
+
+L'APK se construit à part, dans `android/`, un build Gradle qui reprend les sources du
+moteur et de la coquille telles quelles — seuls le lancement en ligne de commande et les
+boîtes de dialogue Swing en sont écartés. Il demande le SDK Android :
+
+```bash
+cd android
+./gradlew assembleRelease
+```
+
+L'APK est signé avec la clé de débogage : il s'installe tel quel, mais ne se publierait
+pas sur une boutique.
+
 ### Jouer
 
 ```bash

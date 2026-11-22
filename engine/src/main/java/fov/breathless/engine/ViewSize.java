@@ -20,8 +20,11 @@ public final class ViewSize {
         {224, 140}, {256, 160}, {288, 180}, {320, 200},
     };
 
-    /** Taille par defaut : celle que le jeu choisit au lancement. */
-    public static final int DEFAULT_INDEX = 3;
+    /**
+     * Taille par defaut : la fenetre entiere, 320 sur 200. L'original partait en 192 sur 120
+     * pour menager un Amiga ; une machine d'aujourd'hui n'a pas a s'en priver.
+     */
+    public static final int DEFAULT_INDEX = 7;
 
     /** Les quatre grosseurs de pixel, dans l'ordre ou les touches du pave les choisissent. */
     public static final int PIXEL_1X1 = 0;

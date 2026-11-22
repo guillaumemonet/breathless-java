@@ -11,15 +11,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ViewSizeTest {
 
     @Test
-    @DisplayName("La taille de depart est celle que choisit le jeu d'origine")
-    void theDefaultIsTheOriginalOne() {
+    @DisplayName("La taille de depart est la fenetre entiere, 320 sur 200")
+    void theDefaultIsTheFullWindow() {
         ViewSize size = new ViewSize();
 
-        assertEquals(192, size.width());
-        assertEquals(120, size.height());
+        assertEquals(320, size.width());
+        assertEquals(200, size.height());
         assertEquals(ViewSize.PIXEL_1X1, size.pixelType());
-        assertEquals(192, size.renderWidth());
-        assertEquals(120, size.renderHeight());
+        assertEquals(320, size.renderWidth());
+        assertEquals(200, size.renderHeight());
     }
 
     @Test
@@ -53,24 +53,24 @@ class ViewSizeTest {
         ViewSize size = new ViewSize();
 
         assertTrue(size.setPixelType(ViewSize.PIXEL_2X1));
-        assertEquals(96, size.renderWidth(), "la largeur calculee doit etre divisee");
-        assertEquals(120, size.renderHeight(), "la hauteur ne change pas");
+        assertEquals(160, size.renderWidth(), "la largeur calculee doit etre divisee");
+        assertEquals(200, size.renderHeight(), "la hauteur ne change pas");
         assertEquals(2, size.scaleX());
         assertEquals(1, size.scaleY());
 
         assertTrue(size.setPixelType(ViewSize.PIXEL_1X2));
-        assertEquals(192, size.renderWidth());
-        assertEquals(60, size.renderHeight());
+        assertEquals(320, size.renderWidth());
+        assertEquals(100, size.renderHeight());
 
         assertTrue(size.setPixelType(ViewSize.PIXEL_2X2));
-        assertEquals(96, size.renderWidth());
-        assertEquals(60, size.renderHeight());
+        assertEquals(160, size.renderWidth());
+        assertEquals(100, size.renderHeight());
         assertEquals(2, size.scaleX());
         assertEquals(2, size.scaleY());
 
         // La taille affichee, elle, ne bouge pas : c'est tout l'interet.
-        assertEquals(192, size.width());
-        assertEquals(120, size.height());
+        assertEquals(320, size.width());
+        assertEquals(200, size.height());
     }
 
     @Test

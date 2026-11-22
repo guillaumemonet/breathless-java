@@ -2,14 +2,10 @@ package fov.breathless.game;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.net.HttpURLConnection;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.time.Duration;
 import java.util.Locale;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -37,8 +33,14 @@ final class DataStore {
     /** Fichier maitre : sa presence signe un repertoire de donnees valable. */
     private static final String MASTER = "breathless.gld";
 
-    /** Au-dela, on renonce : le serveur ne repond pas. */
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
+    /** Au-dela, on renonce : le serveur ne repond pas. En millisecondes. */
+    private static final int TIMEOUT = 30_000;
+
+    /**
+     * Repertoire impose pour les donnees et les reglages, {@code breathless.home} : c'est
+     * ainsi qu'Android donne le stockage propre a l'application.
+     */
+    static final String HOME_PROPERTY = "breathless.home";
 
     private DataStore() {
     }
@@ -49,6 +51,10 @@ final class DataStore {
      * <p>Chaque systeme a le sien ; a defaut, un repertoire cache sous le compte.
      */
     static Path localDirectory() {
+        String imposed = System.getProperty(HOME_PROPERTY);
+        if (imposed != null && !imposed.isBlank()) {
+            return Path.of(imposed).resolve("data");
+        }
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         Path home = Path.of(System.getProperty("user.home", "."));
 
@@ -98,32 +104,24 @@ final class DataStore {
         Files.createDirectories(staging);
 
         progress.accept("Telechargement de l'archive d'origine...");
-        HttpClient client = HttpClient.newBuilder()
-                .connectTimeout(TIMEOUT)
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
-        HttpRequest request = HttpRequest.newBuilder(URI.create(ARCHIVE))
-                .timeout(TIMEOUT)
-                .header("Accept", "application/zip")
-                .GET()
-                .build();
-
-        HttpResponse<InputStream> response;
-        try {
-            response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("Telechargement interrompu", e);
-        }
-        if (response.statusCode() != 200) {
-            throw new IOException("L'archive d'origine a repondu " + response.statusCode()
-                    + " (" + ARCHIVE + ")");
+        // HttpURLConnection plutot que java.net.http : il existe aussi sur Android.
+        HttpURLConnection connection = (HttpURLConnection) java.net.URI.create(ARCHIVE).toURL().openConnection();
+        connection.setConnectTimeout(TIMEOUT);
+        connection.setReadTimeout(TIMEOUT);
+        connection.setInstanceFollowRedirects(true);
+        connection.setRequestProperty("Accept", "application/zip");
+        int status = connection.getResponseCode();
+        if (status != 200) {
+            connection.disconnect();
+            throw new IOException("L'archive d'origine a repondu " + status + " (" + ARCHIVE + ")");
         }
 
         progress.accept("Extraction...");
         int files;
-        try (InputStream body = response.body()) {
+        try (InputStream body = connection.getInputStream()) {
             files = extract(body, staging);
+        } finally {
+            connection.disconnect();
         }
         if (files == 0) {
             deleteTree(staging);
@@ -186,7 +184,8 @@ final class DataStore {
             return;
         }
         try (var stream = Files.walk(path)) {
-            for (Path entry : stream.sorted(java.util.Comparator.reverseOrder()).toList()) {
+            for (Path entry : stream.sorted(java.util.Comparator.reverseOrder())
+                    .collect(java.util.stream.Collectors.toList())) {
                 Files.deleteIfExists(entry);
             }
         }

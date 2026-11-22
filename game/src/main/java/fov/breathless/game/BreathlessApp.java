@@ -47,7 +47,7 @@ import java.util.List;
  * PAL : les lier a la frequence de l'ecran rendrait le jeu plus ou moins rapide selon le
  * moniteur.
  */
-public final class BreathlessApp extends SimpleApplication implements ActionListener {
+public class BreathlessApp extends SimpleApplication implements ActionListener {
 
     /** Resolution interne, celle du jeu d'origine. */
     private static final int WIDTH = 320;
@@ -199,6 +199,9 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         screen = new Picture("ecran");
         screen.setTexture(assetManager, texture, false);
         guiNode.attachChild(screen);
+        if (touchScreen()) {
+            touch = new TouchControls(this, assetManager, guiFont, guiNode);
+        }
         resizeScreen(cam.getWidth(), cam.getHeight());
         checkGpu();
 
@@ -223,37 +226,20 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
      * machine qui en a une autre, demande avant de continuer — voir {@link GpuCheck}.
      */
     private void checkGpu() {
-        String gl = GpuCheck.renderer();
-        List<String> cards = GpuCheck.adapters();
-        String warn = GpuCheck.report(gl, cards);
-        if (warn == null) {
+        // Sur un telephone il n'y a qu'une puce graphique, et ni Swing ni PowerShell.
+        if (touchScreen()) {
             return;
         }
-        // L'avertissement reste a l'ecran, par-dessus l'image du jeu.
-        com.jme3.font.BitmapText red = new com.jme3.font.BitmapText(guiFont);
-        red.setSize(guiFont.getCharSet().getRenderedSize());
-        red.setColor(com.jme3.math.ColorRGBA.Red);
-        red.setText(warn + '\n' + GpuCheck.FIX);
-        red.setLocalTranslation(6, cam.getHeight() - 6, 1);
-        guiNode.attachChild(red);
-        // -Dbreathless.gpu=ok : l'avertissement reste, la question n'est pas posee.
-        if ("ok".equals(System.getProperty("breathless.gpu")) || !GpuCheck.hasOtherCard(cards)) {
-            return;
+        // DesktopGpu emploie Swing : on l'appelle par son nom, pour que la version
+        // Android, qui ne la compile pas, partage cette classe telle quelle.
+        try {
+            Class.forName("fov.breathless.game.DesktopGpu")
+                    .getDeclaredMethod("check", com.jme3.scene.Node.class,
+                            com.jme3.font.BitmapFont.class, int.class, Runnable.class)
+                    .invoke(null, guiNode, guiFont, cam.getHeight(), (Runnable) this::stop);
+        } catch (ReflectiveOperationException | LinkageError absent) {
+            // Pas de poste de travail : rien a verifier.
         }
-        // Demande sur le fil de Swing, pas sur celui du rendu : bloquer le fil OpenGL sur
-        // une boite modale empeche la fenetre du jeu de repondre a Windows, qui la tient
-        // alors pour figee.
-        String text = String.join("\n", warn, "", GpuCheck.FIX, "",
-                "Continuer quand meme sur la carte integree ?");
-        javax.swing.SwingUtilities.invokeLater(() -> {
-            int choice = javax.swing.JOptionPane.showConfirmDialog(null, text,
-                    "Carte graphique", javax.swing.JOptionPane.YES_NO_OPTION,
-                    javax.swing.JOptionPane.WARNING_MESSAGE);
-            if (choice != javax.swing.JOptionPane.YES_OPTION) {
-                System.err.println("Arret a la demande : " + GpuCheck.FIX);
-                stop();
-            }
-        });
     }
 
     /**
@@ -267,9 +253,21 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
         if (screen == null) {
             return;
         }
-        screen.setWidth(width);
-        screen.setHeight(height);
-        screen.setPosition(0, 0);
+        if (touch == null) {
+            screen.setWidth(width);
+            screen.setHeight(height);
+            screen.setPosition(0, 0);
+            return;
+        }
+        // Ecran tactile : l'image garde le rapport de 320 sur 240 et se centre, les bandes
+        // laterales recevant les commandes.
+        float scale = Math.min(width / (float) WIDTH, height / (float) screenHeight);
+        float w = WIDTH * scale;
+        float h = screenHeight * scale;
+        screen.setWidth(w);
+        screen.setHeight(h);
+        screen.setPosition((width - w) / 2f, (height - h) / 2f);
+        touch.layout(width, height, (width - w) / 2f);
     }
 
     @Override
@@ -708,8 +706,24 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
 
     /** Emplacement du fichier de reglages, a cote du jeu. */
     private static java.nio.file.Path configFile() {
+        String home = System.getProperty(DataStore.HOME_PROPERTY);
+        if (home != null && !home.isBlank()) {
+            return java.nio.file.Path.of(home, Configuration.FILE);
+        }
         return java.nio.file.Path.of(Configuration.FILE);
     }
+
+    /**
+     * Le jeu tourne-t-il sur un ecran tactile, sans clavier ? {@code breathless.touch} :
+     * l'image garde alors ses proportions au centre, et les commandes se posent sur les
+     * bandes laissees libres de part et d'autre.
+     */
+    static boolean touchScreen() {
+        return Boolean.getBoolean("breathless.touch");
+    }
+
+    /** Les commandes tactiles, ou {@code null} sur un poste a clavier. */
+    private TouchControls touch;
 
     /** Declare les touches par defaut, avant toute reprise de reglages. */
     private void defaultKeys() {
@@ -847,7 +861,9 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
 
             @Override
             public void onTouchEvent(com.jme3.input.event.TouchEvent event) {
-                // Sans objet.
+                if (touch != null) {
+                    touch.onTouch(event);
+                }
             }
         });
     }
@@ -931,8 +947,28 @@ public final class BreathlessApp extends SimpleApplication implements ActionList
                 ? action.substring(0, action.length() - 1) : action;
     }
 
+    /** Une commande venue des touches tactiles, comme si une touche l'avait envoyee. */
+    void touchAction(String action, boolean pressed) {
+        onAction(action, pressed, 0);
+    }
+
+    /** Un ecran fixe est-il affiche, ou un menu ouvert ? Les commandes tactiles s'y adaptent. */
+    boolean showingScreen() {
+        return screenPicture != null;
+    }
+
     @Override
     public void onAction(String action, boolean pressed, float tpf) {
+        // Sans clavier, « REALLY QUIT ? (Y/N) » ne trouverait pas de reponse : sur un ecran
+        // tactile, ACTION dit oui, MENU — ou la touche Retour — dit non.
+        if (touch != null && configMenu.isAskingQuit()) {
+            if (pressed && resolveAction(action).equals("actionner")) {
+                configMenu.answerQuit(true);
+            } else if (pressed && action.equals("menu")) {
+                configMenu.answerQuit(false);
+            }
+            return;
+        }
         if (configMenu.wantsRawKeys()) {
             return;   // la saisie en cours prend les touches brutes
         }

@@ -150,6 +150,32 @@ public final class Raycaster {
 
             if (code < 0) {
                 table.add(column, dist, -code, coord, edge, true);
+                // RCXOloop : un rayon sur quatre poursuit au-dela du mur, onze cases de
+                // plus, pour ne relever que les objets. Un ennemi a l'angle d'un mur
+                // depasse ainsi progressivement, au lieu d'apparaitre d'un coup quand
+                // un rayon atteint sa case ; la decoupe en profondeur cache le reste.
+                if ((column & 3) == 0) {
+                    if (advanceX) {
+                        distX = add(distX, stepDistX);
+                    } else {
+                        distZ = add(distZ, stepDistZ);
+                    }
+                    for (int extra = 0; extra <= 10; extra++) {
+                        boolean alongX = distX <= distZ;
+                        if (alongX) {
+                            cellX += stepCellX;
+                            distX = add(distX, stepDistX);
+                        } else {
+                            cellZ += stepCellZ;
+                            distZ = add(distZ, stepDistZ);
+                        }
+                        if (cellX < 0 || cellZ < 0
+                                || cellX >= Level.MAP_SIZE || cellZ >= Level.MAP_SIZE) {
+                            break;
+                        }
+                        table.reach(cellX, cellZ);
+                    }
+                }
                 return;
             }
             if (code != lastBlock) {

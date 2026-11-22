@@ -55,8 +55,9 @@ public final class Crosshair {
      * une position fixe, qui tombe au centre de ses 320 sur 200.
      */
     public static void draw(byte[] target, int width, int height) {
-        int left = (width - SIZE) / 2;
-        int top = height / 2 - SIZE / 2 - 1;
+        // La position d'origine, (155, 96), rapportee a la taille de la vue.
+        int left = LEFT + (width - 320) / 2;
+        int top = TOP + (height - 200) / 2;
         for (int line = 0; line < SIZE; line++) {
             int bits = SHAPE[line];
             if (bits == 0) {

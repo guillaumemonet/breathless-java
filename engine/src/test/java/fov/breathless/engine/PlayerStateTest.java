@@ -124,7 +124,12 @@ class PlayerStateTest {
         int health = state.health();
         int shields = state.shields();
 
-        // La premiere morsure tombe des le premier pas.
+        // Poser le pied arme le compteur sans mordre (DMinithurt) : la premiere morsure
+        // tombe cinquante pas plus tard, et une traversee rapide ne coute rien.
+        for (int tick = 0; tick < 50; tick++) {
+            state.standOn(10, 1);
+        }
+        assertEquals(shields, state.shields(), "le sol a mordu des le premier pas");
         state.standOn(10, 1);
         assertTrue(state.shields() < shields, "la premiere morsure n'a pas eu lieu");
 

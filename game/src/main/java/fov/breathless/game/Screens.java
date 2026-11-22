@@ -39,6 +39,14 @@ final class Screens {
     static final int LOGO_1_TICKS = 250;
     static final int LOGO_2_TICKS = 400;
 
+    /**
+     * Durees d'attente de {@code Waiting} : les credits, l'ecran final et la banniere de
+     * fin de partie passent seuls, une touche les abregeant.
+     */
+    static final int CREDITS_TICKS = 3000;
+    static final int END_TICKS = 5000;
+    static final int GAME_OVER_TICKS = 1000;
+
     /** Les quatre presentations de monde, dans l'ordre. */
     private static final String[] WORLDS = {"WLD1", "WLD2", "WLD3", "WLD4"};
 

@@ -18,10 +18,15 @@ import java.util.List;
  */
 public final class Combat {
 
-    /** Hauteur du canon au-dessus du sol, a defaut d'indication de l'arme. */
-    private static final int DEFAULT_MUZZLE_HEIGHT = 32;
-
     private final World world;
+
+    /** {@code PlayerSpeed} au moment du tir, que le projectile herite a moitie. */
+    private int playerSpeed;
+
+    /** Le joueur fournit son elan avant chaque pas. */
+    public void setPlayerSpeed(int speed) {
+        this.playerSpeed = speed;
+    }
     private final Weapons weapons;
     private final PlayerState state;
     private final java.util.Map<Integer, ObjectDefinition> shotsByWeapon = new java.util.HashMap<>();
@@ -55,9 +60,11 @@ public final class Combat {
         this.world = world;
         this.weapons = weapons;
         this.state = state;
+        // InitObjects remplit GunObj dans l'ordre du catalogue : pour un meme numero, le
+        // dernier projectile l'emporte.
         for (ObjectDefinition definition : bank.objects().values()) {
             if (definition.objectType() == ObjectDefinition.TYPE_SHOT) {
-                shotsByWeapon.putIfAbsent(definition.param(7), definition);
+                shotsByWeapon.put((int) (byte) definition.param(7), definition);
             }
         }
     }
@@ -94,8 +101,37 @@ public final class Combat {
             pending = 0;
         }
 
+        currentAnimStep = animStep();
         advanceProjectiles(camera);
         advanceExplosions();
+        flash();
+    }
+
+    /**
+     * {@code GlobalLight} : tant qu'une explosion n'a pas joue la moitie de ses images, la
+     * scene s'eclaire d'un coup (-5, plus clair) ; ensuite la lumiere revient d'un cran par
+     * image jusqu'a la normale.
+     */
+    private int globalLight;
+
+    public int globalLight() {
+        return globalLight;
+    }
+
+    private void flash() {
+        boolean bright = false;
+        for (SceneObject object : world.objects()) {
+            if (object.isSelfAnimated()
+                    && object.animCounter() * 2 < object.definition().frames().size()) {
+                bright = true;
+                break;
+            }
+        }
+        if (bright) {
+            globalLight = -5;
+        } else if (globalLight < 0) {
+            globalLight++;
+        }
     }
 
     /** Arrete le bruit du lance-flammes, qui boucle tant qu'il crache. */
@@ -134,12 +170,22 @@ public final class Combat {
             if (flameOscillation >= FLAME_SWING || flameOscillation <= -FLAME_SWING) {
                 flameDirection = -flameDirection;
             }
-            return fire(camera, playerBlock, flameOscillation, false);
+            // PFflstop : faute d'energie, le bruit du lance-flammes s'arrete.
+            if (!fire(camera, playerBlock, flameOscillation, false)) {
+                stopFlame();
+                return false;
+            }
+            return true;
         }
         if (weapons.isBoosted(weapons.active())) {
-            boolean first = fire(camera, playerBlock, -BOOST_SPREAD, false);
-            // Le second ne coute rien : l'original passe a6 non nul pour l'en dispenser.
-            return fire(camera, playerBlock, BOOST_SPREAD, true) || first;
+            // bsr PlayerShot / bne PFnofire : le second tir ne part que si le premier a pu
+            // partir. Il ne coute alors rien — l'original passe a6 non nul pour l'en
+            // dispenser.
+            if (!fire(camera, playerBlock, -BOOST_SPREAD, false)) {
+                return false;
+            }
+            fire(camera, playerBlock, BOOST_SPREAD, true);
+            return true;
         }
         return fire(camera, playerBlock, 0, false);
     }
@@ -166,17 +212,17 @@ public final class Combat {
             state.spendEnergy(cost);
         }
 
-        // La hauteur du canon est donnee par le douzieme parametre du projectile.
-        int muzzle = shot.param(12);
-        if (muzzle == 0) {
-            muzzle = DEFAULT_MUZZLE_HEIGHT;
-        }
-        int startY = world.floorHeight(playerBlock) + muzzle;
+        // La hauteur du canon est donnee par le douzieme parametre du projectile, un octet
+        // sans signe ajoute au sol du joueur.
+        int startY = world.floorHeight(playerBlock) + (shot.param(12) & 0xFF);
+
+        // PFnomipsp : le tir part avec la moitie de l'elan du joueur en plus, jamais moins.
+        int speed = (Math.max(0, playerSpeed) >> 1) + shot.param(2);
 
         world.projectiles().add(new Projectile(shot, true,
                 camera.x() >> 16, camera.z() >> 16, startY,
                 (camera.heading() + aimOffset) & Trig.MASK,
-                camera.lookHeight() << 8, shot.param(2)));
+                (short) (camera.lookStep() << 8), speed));
         // Le second tir d'une arme amelioree est muet : l'original passe d7 non nul.
         if (!free) {
             String fired = soundOf(shot, 0);
@@ -187,35 +233,102 @@ public final class Combat {
         return true;
     }
 
+    /**
+     * {@code animstep} : un quart d'image par cinquantieme, avec retenue. Tirs et
+     * explosions s'animent ainsi a 12,5 images par seconde.
+     */
+    private int animCarry;
+
+    private int animStep() {
+        animCarry += 0x4000;
+        int step = animCarry >>> 16;
+        animCarry &= 0xFFFF;
+        return step;
+    }
+
+    /** Pas d'animation du cinquantieme en cours. */
+    private int currentAnimStep;
+
+    /**
+     * {@code MSloop} : la portee, puis les coins avec l'altitude precedente, puis les
+     * cibles, puis la case d'arrivee — et seulement alors la nouvelle position.
+     */
     private void advanceProjectiles(Camera camera) {
         Iterator<Projectile> iterator = world.projectiles().iterator();
         while (iterator.hasNext()) {
             Projectile projectile = iterator.next();
 
-            if (!projectile.advance()) {
-                // Portee epuisee : le tir se dissipe sans toucher quoi que ce soit.
+            boolean stopped = !projectile.advance()
+                    || hitsCorners(projectile)
+                    || hitsTarget(projectile, camera)
+                    || hitsArrivalCell(projectile);
+            if (stopped) {
                 explode(projectile);
                 iterator.remove();
                 continue;
             }
-            if (hitsGeometry(projectile) || hitsTarget(projectile, camera)) {
-                explode(projectile);
-                iterator.remove();
-            }
+            projectile.commit();
+            projectile.animate(currentAnimStep);
         }
     }
 
-    /** Le tir a-t-il rencontre un mur, un plafond ou un sol ? */
-    private boolean hitsGeometry(Projectile projectile) {
-        int cellX = Math.floorDiv(projectile.x(), Level.BLOCK_SIZE);
-        int cellZ = Math.floorDiv(projectile.z(), Level.BLOCK_SIZE);
-
-        int code = world.cell(cellX, cellZ);
-        if (code <= 0) {
-            return true;   // mur plein, ou hors du monde jouable
+    /**
+     * Une case est-elle infranchissable a cette altitude ? Mur plein, ou
+     * {@code y < sol}, ou {@code y >= plafond - hauteur du tir}.
+     */
+    private boolean blocks(int code, int y, int height) {
+        if (code < 0) {
+            return true;
         }
-        return projectile.y() <= world.floorHeight(code)
-                || projectile.y() >= world.ceilHeight(code);
+        return y < world.floorHeight(code) || y >= world.ceilHeight(code) - height;
+    }
+
+    /**
+     * {@code CTS0} a {@code CTS7} : trois points a une largeur du centre, du cote ou va
+     * le tir, avec l'altitude qu'il avait au pas precedent. La case du centre n'est pas
+     * testee ici.
+     */
+    private boolean hitsCorners(Projectile projectile) {
+        int x = projectile.nextX();
+        int z = projectile.nextZ();
+        int w = projectile.radius();
+        int cellX = Math.floorDiv(x, Level.BLOCK_SIZE);
+        int cellZ = Math.floorDiv(z, Level.BLOCK_SIZE);
+        int[][] points = switch ((projectile.heading() >> 8) & 7) {
+            case 0 -> new int[][]{{x + w, z - w}, {x + w, z}, {x + w, z + w}};
+            case 1 -> new int[][]{{x + w, z}, {x, z + w}, {x + w, z + w}};
+            case 2 -> new int[][]{{x + w, z + w}, {x, z + w}, {x - w, z + w}};
+            case 3 -> new int[][]{{x, z + w}, {x - w, z}, {x - w, z + w}};
+            case 4 -> new int[][]{{x - w, z + w}, {x - w, z}, {x - w, z - w}};
+            case 5 -> new int[][]{{x - w, z}, {x, z - w}, {x - w, z - w}};
+            case 6 -> new int[][]{{x - w, z - w}, {x, z - w}, {x + w, z - w}};
+            default -> new int[][]{{x, z - w}, {x + w, z}, {x + w, z - w}};
+        };
+        for (int[] point : points) {
+            int px = Math.floorDiv((short) point[0], Level.BLOCK_SIZE);
+            int pz = Math.floorDiv((short) point[1], Level.BLOCK_SIZE);
+            if (px == cellX && pz == cellZ) {
+                continue;
+            }
+            if (blocks(world.cell(px, pz), projectile.y(), projectile.height())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * La case d'arrivee, testee seulement si le tir change de case : {@code MSnochgbl}
+     * saute le test quand il reste sur la meme.
+     */
+    private boolean hitsArrivalCell(Projectile projectile) {
+        int cellX = Math.floorDiv(projectile.nextX(), Level.BLOCK_SIZE);
+        int cellZ = Math.floorDiv(projectile.nextZ(), Level.BLOCK_SIZE);
+        if (cellX == Math.floorDiv(projectile.x(), Level.BLOCK_SIZE)
+                && cellZ == Math.floorDiv(projectile.z(), Level.BLOCK_SIZE)) {
+            return false;
+        }
+        return blocks(world.cell(cellX, cellZ), projectile.y(), projectile.height());
     }
 
     /**
@@ -267,13 +380,13 @@ public final class Combat {
 
         if (!projectile.isFromPlayer()) {
             int reach = radius * radius + Player.WIDTH * Player.WIDTH;
-            int dx = (camera.x() >> 16) - projectile.x();
-            int dz = (camera.z() >> 16) - projectile.z();
+            int dx = (short) ((camera.x() >> 16) - projectile.nextX());
+            int dz = (short) ((camera.z() >> 16) - projectile.nextZ());
             if (dx * dx + dz * dz > reach) {
                 return false;
             }
             // Un tir qui passe bien au-dessus de la tete ne touche pas.
-            if (camera.y() + radius + 3 < projectile.y()) {
+            if (camera.y() + radius + 3 < projectile.nextY()) {
                 return false;
             }
             // PlayerHit crie a chaque coup encaisse, pas seulement au dernier.
@@ -296,34 +409,41 @@ public final class Combat {
             if (EnemyAi.isFalling(nearest)) {
                 return true;
             }
+            // MSctrlobjcoll1 : l'arret sous le choc vient avant la perte de resistance,
+            // meme si le coup est fatal.
+            EnemyAi.wound(nearest);
             if (nearest.damage(projectile.power())) {
                 // DestroyEnemy credite le deuxieme parametre du type abattu : de mille
                 // points pour le plus faible a vingt-cinq mille pour le plus coriace.
                 state.addScore(nearest.definition().param(2));
-                String death = soundOf(nearest.definition(), 2);
-                if (death != null) {
-                    sound.play(death);
-                }
-                // Le corps tombe dans la direction du tir puis reste au sol. Sans
-                // animation de chute, il explose sur place.
-                if (!EnemyAi.kill(nearest, projectile.heading())) {
+                // Un tir qui explose fait exploser sa cible ; sinon le corps tombe dans la
+                // direction du tir, s'il a une chute, et crie en tombant.
+                boolean explodes = projectile.explosionIndex() >= 0;
+                if (EnemyAi.kill(nearest, projectile.heading(), explodes)) {
+                    playAt(soundOf(nearest.definition(), 2), nearest);
+                } else {
                     explodeAt(nearest);
                 }
             } else {
-                String hurt = soundOf(nearest.definition(), 1);
-                if (hurt != null) {
-                    sound.play(hurt);
-                }
-                EnemyAi.wound(nearest);
+                playAt(soundOf(nearest.definition(), 1), nearest);
             }
         }
         return true;
     }
 
+    /** {@code ObjBufferedPlaySoundFX} : un son emis depuis l'objet. */
+    private void playAt(String name, SceneObject source) {
+        if (name != null) {
+            sound.playAt(name, source.x(), source.z());
+        }
+    }
+
     /** Objet solide le plus proche du tir dans son voisinage, ou {@code null}. */
     private SceneObject nearestTarget(Projectile projectile, int radius) {
-        int cellX = Math.floorDiv(projectile.x(), Level.BLOCK_SIZE);
-        int cellZ = Math.floorDiv(projectile.z(), Level.BLOCK_SIZE);
+        // Le voisinage est celui de la case visee, mais la distance se mesure depuis la
+        // position encore en vigueur : obj_x n'est mis a jour qu'apres les collisions.
+        int cellX = Math.floorDiv(projectile.nextX(), Level.BLOCK_SIZE);
+        int cellZ = Math.floorDiv(projectile.nextZ(), Level.BLOCK_SIZE);
         int[] octant = NEIGHBOURS[(projectile.heading() >> 8) & 7];
 
         SceneObject nearest = null;
@@ -382,25 +502,57 @@ public final class Combat {
      * huitiemes de tour, tirer dans son axe le ferait manquer presque a tous les coups.
      */
     void enemyShot(SceneObject enemy, int gun, int playerX, int playerZ, int playerY) {
+        if (gun == 0) {
+            return;
+        }
         ObjectDefinition shot = shotsByWeapon.get(gun);
         if (shot == null) {
             return;
         }
-        int dx = playerX - enemy.x();
-        int dz = playerZ - enemy.z();
-        int distance = (int) Math.round(Math.sqrt((double) dx * dx + (double) dz * dz));
+        int dx = (short) (playerX - enemy.x());
+        int dz = (short) (playerZ - enemy.z());
+        int distance = (int) Math.sqrt((double) dx * dx + (double) dz * dz);
         if (distance == 0) {
             return;
         }
         int heading = (int) Math.round(Math.atan2(dz, dx) * Trig.STEPS / (2 * Math.PI))
                 & Trig.MASK;
 
-        int startY = enemy.y() + enemy.definition().height() / 2;
-        // Inclinaison telle que le tir atteigne la hauteur du joueur a sa distance.
-        int pitch = (int) (((long) (playerY - startY) << 15) / distance);
+        // Le tir part du sol de l'ennemi, rehausse du douzieme parametre de son type.
+        int startY = world.floorHeight(Math.abs(world.cell(
+                Math.floorDiv(enemy.x(), Level.BLOCK_SIZE),
+                Math.floorDiv(enemy.z(), Level.BLOCK_SIZE))))
+                + (enemy.definition().param(12) & 0xFF);
+
+        // Le tir nait seize unites plus loin : s'il nait dans un mur, un sol ou un
+        // plafond, il ne part pas.
+        int firstX = (short) (enemy.x() + ((Trig.cos(heading) * 16) >> 16));
+        int firstZ = (short) (enemy.z() + ((Trig.sin(heading) * 16) >> 16));
+        int code = world.cell(Math.floorDiv(firstX, Level.BLOCK_SIZE),
+                Math.floorDiv(firstZ, Level.BLOCK_SIZE));
+        if (blocks(code, startY, shot.height())) {
+            return;
+        }
+
+        // Pente vers les yeux du joueur : ((PlayerY - obj_y - 54) << 15) / distance, sur
+        // seize bits. Un divs qui deborde sature a 32767, du signe de l'ecart.
+        int rise = (short) (playerY - enemy.y() - Camera.EYES_HEIGHT);
+        long quotient = ((long) rise << 15) / distance;
+        int pitch = (quotient > Short.MAX_VALUE || quotient < Short.MIN_VALUE)
+                ? (rise >= 0 ? 32767 : -32767) : (int) quotient;
+
+        // La vitesse du tir ajoute la moitie de celle de l'ennemi.
+        int speed = (enemy.speed() >> 1) + shot.param(2);
 
         world.projectiles().add(new Projectile(shot, false,
-                enemy.x(), enemy.z(), startY, heading, pitch, shot.param(2)));
+                enemy.x(), enemy.z(), startY, heading, pitch, speed));
+        playAtPoint(soundOf(shot, 0), enemy.x(), enemy.z());
+    }
+
+    private void playAtPoint(String name, int x, int z) {
+        if (name != null) {
+            sound.playAt(name, x, z);
+        }
     }
 
     /**
@@ -416,12 +568,18 @@ public final class Combat {
             enemy.collect();
             return;
         }
-        enemy.setY(enemy.y() + (enemy.definition().height() - definition.height()) / 2);
+        enemy.setY(enemy.y() + ((enemy.definition().height() - definition.height()) >> 1));
         enemy.setSpeed(0);
         enemy.becomeExplosion(definition);
+        playAt(soundOf(definition, 0), enemy);
     }
 
-    /** Laisse une explosion a l'endroit de l'impact, si le tir en declare une. */
+    /**
+     * Laisse une explosion a l'endroit de l'impact, si le tir en declare une.
+     *
+     * <p>{@code MSSexpl} : le tir devient l'explosion, recentree sur sa hauteur, et fait
+     * entendre le premier son de celle-ci.
+     */
     private void explode(Projectile projectile) {
         int index = projectile.explosionIndex();
         if (index < 0) {
@@ -431,10 +589,12 @@ public final class Combat {
         if (definition == null || definition.frames().isEmpty()) {
             return;
         }
+        int y = projectile.y() + ((short) (projectile.height() - definition.height()) >> 1);
         SceneObject explosion = new SceneObject(definition,
-                projectile.x(), projectile.z(), projectile.y(), 0, 0);
+                projectile.x(), projectile.z(), y, 0, 0);
         explosion.setSelfAnimated(true);
         world.objects().add(explosion);
+        playAt(soundOf(definition, 0), explosion);
     }
 
     /** Image du cadavre d'un ennemi que l'explosion laisse au sol. {@code AOESrestien}. */
@@ -461,7 +621,8 @@ public final class Combat {
             if (!object.isSelfAnimated()) {
                 continue;
             }
-            int next = object.animCounter() + 1;
+            // AOEloop : une explosion avance de animstep, soit 12,5 images par seconde.
+            int next = object.animCounter() + currentAnimStep;
             if (next < object.definition().frames().size()) {
                 object.setAnimCounter(next);
                 continue;

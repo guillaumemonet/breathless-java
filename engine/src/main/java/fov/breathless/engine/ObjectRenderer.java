@@ -33,10 +33,17 @@ import java.util.List;
 public final class ObjectRenderer {
 
     /**
-     * Exposant d'echelle horizontale des sprites, pour des pixels 1x1. Le moteur le
-     * reduit d'un cran par doublement de pixel.
+     * {@code ptmul} : exposant d'echelle horizontale des sprites. Quatre en pixels 1x1,
+     * un de moins quand les colonnes sont doublees (on en calcule deux fois moins), un de
+     * plus quand les lignes le sont (la distance, rapportee a un {@code yRatio} deux fois
+     * plus petit, double).
      */
-    private static final int SCALE_SHIFT = 4;
+    private int scaleShift = 4;
+
+    /** Regle l'echelle des sprites sur la grosseur des pixels, {@link ViewSize#PIXEL_1X1} et suivants. */
+    public void setPixelType(int pixelType) {
+        scaleShift = 4 - (pixelType & 1) + ((pixelType >> 1) & 1);
+    }
 
     /** Les coordonnees laterales portent trois bits de precision supplementaires. */
     private static final int LATERAL_BITS = 3;
@@ -51,6 +58,7 @@ public final class ObjectRenderer {
 
     private static final class Projected {
         SceneObject object;
+        Projectile projectile;
         int depth;
         int lateral;
         int distance;
@@ -66,13 +74,16 @@ public final class ObjectRenderer {
         this.globalLight = globalLight;
     }
 
-    public void render(Camera camera, RayTable table, Framebuffer target, List<SceneObject> objects) {
+    /**
+     * Dessine les objets et les tirs en vol.
+     *
+     * <p>Dans l'original un tir est un objet de la carte comme les autres : il passe par
+     * le meme tri en profondeur, la meme lumiere, la meme animation. Un tir derriere un
+     * ennemi est donc cache par lui.
+     */
+    public void render(Camera camera, RayTable table, Framebuffer target, List<SceneObject> objects,
+                       List<Projectile> projectiles) {
         this.table = table;
-        int cos = Trig.cos(camera.heading()) >> 2;   // 2.14, comme dans l'original
-        int sin = Trig.sin(camera.heading()) >> 2;
-        int playerX = camera.x() >> 16;
-        int playerZ = camera.z() >> 16;
-
         visible.clear();
         for (SceneObject object : objects) {
             // Un objet en attente de son declencheur est bel et bien la : le moteur
@@ -83,30 +94,21 @@ public final class ObjectRenderer {
             if (object.isCollected() || object.definition().frames().isEmpty()) {
                 continue;
             }
-            // Seuls les objets dont un rayon a traverse la case sont visibles.
-            if (!table.reached(Math.floorDiv(object.x(), fov.breathless.gld.level.Level.BLOCK_SIZE),
-                    Math.floorDiv(object.z(), fov.breathless.gld.level.Level.BLOCK_SIZE))) {
+            Projected projected = project(camera, object.x(), object.z());
+            if (projected != null) {
+                projected.object = object;
+                visible.add(projected);
+            }
+        }
+        for (Projectile projectile : projectiles) {
+            if (projectile.definition().frames().isEmpty()) {
                 continue;
             }
-            int dx = object.x() - playerX;
-            int dz = object.z() - playerZ;
-
-            int depth = (dx * cos + dz * sin) >> 14;
-            if (depth <= 0) {
-                continue;   // derriere la camera
+            Projected projected = project(camera, projectile.x(), projectile.z());
+            if (projected != null) {
+                projected.projectile = projectile;
+                visible.add(projected);
             }
-            int distance = (int) ((((long) depth) << 16) / viewport.yRatio());
-            if (distance <= 0) {
-                continue;
-            }
-
-            Projected projected = new Projected();
-            projected.object = object;
-            projected.depth = depth;
-            projected.lateral = (dz * cos - dx * sin) >> (14 - LATERAL_BITS);
-            projected.distance = distance;
-            projected.rayDistance = distance << 9;
-            visible.add(projected);
         }
 
         // Du plus lointain au plus proche : les sprites se recouvrent sans tampon de
@@ -118,118 +120,83 @@ public final class ObjectRenderer {
         }
     }
 
-    /**
-     * Dessine les tirs en vol.
-     *
-     * <p>Ils ne figurent pas dans la liste des objets du niveau : ils vont et viennent
-     * trop vite pour valoir une instance permanente. Le trace est le meme, seule la source
-     * des coordonnees change.
-     */
-    public void renderProjectiles(Camera camera, RayTable table, Framebuffer target,
-                                  List<Projectile> projectiles) {
-        if (projectiles.isEmpty()) {
-            return;
-        }
-        this.table = table;
-        int cos = Trig.cos(camera.heading()) >> 2;
-        int sin = Trig.sin(camera.heading()) >> 2;
-        int playerX = camera.x() >> 16;
-        int playerZ = camera.z() >> 16;
-
-        for (Projectile projectile : projectiles) {
-            if (projectile.definition().frames().isEmpty()) {
-                continue;
-            }
-            if (!table.reached(Math.floorDiv(projectile.x(), fov.breathless.gld.level.Level.BLOCK_SIZE),
-                    Math.floorDiv(projectile.z(), fov.breathless.gld.level.Level.BLOCK_SIZE))) {
-                continue;
-            }
-            int dx = projectile.x() - playerX;
-            int dz = projectile.z() - playerZ;
-
-            int depth = (dx * cos + dz * sin) >> 14;
-            if (depth <= 0) {
-                continue;
-            }
-            int distance = (int) ((((long) depth) << 16) / viewport.yRatio());
-            if (distance <= 0) {
-                continue;
-            }
-
-            Projected projected = new Projected();
-            projected.object = null;
-            projected.depth = depth;
-            projected.lateral = (dz * cos - dx * sin) >> (14 - LATERAL_BITS);
-            projected.distance = distance;
-            projected.rayDistance = distance << 9;
-            drawProjectile(camera, table, target, projected, projectile);
-        }
+    /** Compatibilite : les objets seuls. */
+    public void render(Camera camera, RayTable table, Framebuffer target, List<SceneObject> objects) {
+        render(camera, table, target, objects, List.of());
     }
 
-    private void drawProjectile(Camera camera, RayTable table, Framebuffer target,
-                                Projected projected, Projectile projectile) {
-        ObjectFrame frame = projectile.definition().frames().get(0);
-        int distance = projected.distance;
-
-        int screenWidth = (frame.width() << (SCALE_SHIFT + LATERAL_BITS)) / distance;
-        int screenHeight = (frame.height() << 7) / distance;
-        if (screenWidth <= 0 || screenHeight <= 0) {
-            return;
+    /**
+     * Place un point dans le repere de la camera, ou {@code null} s'il n'est pas visible.
+     *
+     * <p>{@code DOloop2} : la coordonnee laterale est multipliee par 9/8 avant la
+     * projection — sans quoi un objet serait place a 8/9 de son ecart au centre, et
+     * glisserait sur le sol en tournant.
+     */
+    private Projected project(Camera camera, int x, int z) {
+        // Seuls les objets dont un rayon a traverse la case sont visibles.
+        if (!table.reached(Math.floorDiv(x, fov.breathless.gld.level.Level.BLOCK_SIZE),
+                Math.floorDiv(z, fov.breathless.gld.level.Level.BLOCK_SIZE))) {
+            return null;
         }
+        int cos = Trig.cos(camera.heading()) >> 2;   // 2.14, comme dans l'original
+        int sin = Trig.sin(camera.heading()) >> 2;
+        int dx = x - (camera.x() >> 16);
+        int dz = z - (camera.z() >> 16);
 
-        int left = ((projected.lateral - (frame.xOffset() << LATERAL_BITS)) << SCALE_SHIFT) / distance
-                + viewport.halfWidth();
-        int bottom = (((camera.y() - projectile.y() - frame.yOffset()) << 7) / distance)
-                + viewport.halfHeight();
-        int top = bottom - screenHeight + camera.lookHeight();
-
-        int columnStep = (frame.width() << 16) / screenWidth;
-        int rowStep = (frame.height() << 16) / screenHeight;
-
-        // Un tir brille : il est trace en pleine lumiere, sans assombrissement.
-        LightingTable shading = world.lighting();
-
-        int firstColumn = Math.max(left, 0);
-        int lastColumn = Math.min(left + screenWidth - 1, viewport.width() - 1);
-        for (int x = firstColumn; x <= lastColumn; x++) {
-            int source = ((x - left) * columnStep) >> 16;
-            if (source < 0 || source >= frame.width()) {
-                continue;
-            }
-            int hit = clipFor(table, x, projected.rayDistance);
-            if (hit < 0) {
-                continue;
-            }
-            drawColumn(target, frame, source, x, top, rowStep,
-                    table.clipMin(x, hit), table.clipMax(x, hit), shading, 0);
+        int depth = (dx * cos + dz * sin) >> 14;
+        if (depth <= 0) {
+            return null;   // derriere la camera
         }
+        int distance = (int) ((((long) depth) << 16) / viewport.yRatio());
+        if (distance <= 0) {
+            return null;
+        }
+        Projected projected = new Projected();
+        projected.depth = depth;
+        int lateral = (dz * cos - dx * sin) >> (14 - LATERAL_BITS);
+        projected.lateral = ((lateral << 3) + lateral) >> 3;
+        projected.distance = distance;
+        projected.rayDistance = distance << 9;
+        return projected;
     }
 
     private void draw(Camera camera, RayTable table, Framebuffer target, Projected projected) {
         SceneObject object = projected.object;
-        ObjectFrame frame = selectFrame(camera, object);
+        Projectile projectile = projected.projectile;
+        ObjectFrame frame;
+        int baseY;
+        if (projectile != null) {
+            List<ObjectFrame> frames = projectile.definition().frames();
+            frame = frames.get(Math.floorMod(projectile.animCounter(), frames.size()));
+            baseY = projectile.y();
+        } else {
+            frame = selectFrame(camera, object);
+            baseY = object.y();
+        }
         if (frame == null) {
             return;
         }
 
         int distance = projected.distance;
 
-        int screenWidth = (frame.width() << (SCALE_SHIFT + LATERAL_BITS)) / distance;
+        int screenWidth = (frame.width() << (scaleShift + LATERAL_BITS)) / distance;
         int screenHeight = (frame.height() << 7) / distance;
         if (screenWidth <= 0 || screenHeight <= 0) {
             return;
         }
 
-        int left = ((projected.lateral - (frame.xOffset() << LATERAL_BITS)) << SCALE_SHIFT) / distance
+        int left = ((projected.lateral - (frame.xOffset() << LATERAL_BITS)) << scaleShift) / distance
                 + viewport.halfWidth();
-        int bottom = (((camera.y() - object.y() - frame.yOffset()) << 7) / distance)
+        int bottom = (((camera.y() - baseY - frame.yOffset()) << 7) / distance)
                 + viewport.halfHeight();
         int top = bottom - screenHeight + camera.lookHeight();
 
         int columnStep = (frame.width() << 16) / screenWidth;
         int rowStep = (frame.height() << 16) / screenHeight;
 
-        int blockIndex = blockOf(object);
+        // Un tir est eclaire comme tout objet : par la distance et par son bloc.
+        int blockIndex = (projectile != null)
+                ? blockAt(projectile.x(), projectile.z()) : blockOf(object);
         Block block = world.block(blockIndex);
         int light = lightLevel(projected.rayDistance, block, blockIndex);
         LightingTable shading = block.hasFog() ? world.fogLighting() : world.lighting();
@@ -303,6 +270,8 @@ public final class ObjectRenderer {
             // designe l'image par son index absolu, sans passer par l'octant.
             index = object.animCounter();
         } else if (definition.isDirectional()) {
+            // DOadnostop : un ennemi dessine bougera meme au-dela de vingt blocs.
+            object.markInView();
             int objectOctant = ((object.heading() + 128) >> 8) & 7;
             int cameraOctant = ((camera.heading() + 128) >> 8) & 7;
             index = (((objectOctant + 6 - cameraOctant) & 7) << 4) + object.animCounter();
@@ -319,8 +288,12 @@ public final class ObjectRenderer {
     }
 
     private int blockOf(SceneObject object) {
-        int cellX = Math.floorDiv(object.x(), fov.breathless.gld.level.Level.BLOCK_SIZE);
-        int cellZ = Math.floorDiv(object.z(), fov.breathless.gld.level.Level.BLOCK_SIZE);
+        return blockAt(object.x(), object.z());
+    }
+
+    private int blockAt(int x, int z) {
+        int cellX = Math.floorDiv(x, fov.breathless.gld.level.Level.BLOCK_SIZE);
+        int cellZ = Math.floorDiv(z, fov.breathless.gld.level.Level.BLOCK_SIZE);
         return Math.abs(world.cell(cellX, cellZ));
     }
 

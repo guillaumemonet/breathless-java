@@ -44,8 +44,8 @@ public final class Terminal {
     };
 
     private static final Entry[] WEAPON_ENTRIES = {
-        new Entry("-FIREBALLS_____  4000", 47, 4000, 1, 0),
-        new Entry("-PLASMA_GUN____  9000", 54, 9000, 2, 0),
+        new Entry("-FIREBALLS_____ _4000", 47, 4000, 1, 0),
+        new Entry("-PLASMA_GUN____ _9000", 54, 9000, 2, 0),
         new Entry("-FLAME-THROWER_ 13000", 61, 13000, 3, 0),
         new Entry("-MAGNETIC_GUN__ 20000", 68, 20000, 4, 0),
         new Entry("-DEATH_MACHINE_ 35000", 75, 35000, 5, 0),
@@ -53,23 +53,23 @@ public final class Terminal {
     };
 
     private static final Entry[] BOOST_ENTRIES = {
-        new Entry("-SIMPLE_SHOT___  1500", 40, 1500, 0, 0),
-        new Entry("-FIREBALLS_____  2000", 47, 2000, 1, 0),
-        new Entry("-PLASMA_GUN____  5000", 54, 5000, 2, 0),
-        new Entry("-FLAME-THROWER_   N A", 61, -1, 3, 0),
+        new Entry("-SIMPLE_SHOT___ _1500", 40, 1500, 0, 0),
+        new Entry("-FIREBALLS_____ _2000", 47, 2000, 1, 0),
+        new Entry("-PLASMA_GUN____ _5000", 54, 5000, 2, 0),
+        new Entry("-FLAME-THROWER_ __N_A ", 61, -1, 3, 0),
         new Entry("-MAGNETIC_GUN__ 20000", 68, 20000, 4, 0),
         new Entry("-DEATH_MACHINE_ 20000", 75, 20000, 5, 0),
         new Entry("-EXIT", 82, 0, -1, 0),
     };
 
     private static final Entry[] ACCESSORY_ENTRIES = {
-        new Entry("- HEALTH_+10_____ 200", 40, 200, PlayerState.PICKUP_HEALTH, 10),
-        new Entry("- SHIELDS_+10____ 150", 47, 150, PlayerState.PICKUP_SHIELDS, 10),
-        new Entry("- ENERGY_+100____ 200", 54, 200, PlayerState.PICKUP_ENERGY, 100),
-        new Entry("- GREEN_KEY_____ 5000", 61, 5000, PlayerState.PICKUP_GREEN_KEY, 1),
-        new Entry("- YELLOW_KEY____ 5000", 68, 5000, PlayerState.PICKUP_YELLOW_KEY, 1),
-        new Entry("- RED_KEY_______ 5000", 75, 5000, PlayerState.PICKUP_RED_KEY, 1),
-        new Entry("- BLUE_KEY______ 5000", 82, 5000, PlayerState.PICKUP_BLUE_KEY, 1),
+        new Entry("- HEALTH_+10______200", 40, 200, PlayerState.PICKUP_HEALTH, 10),
+        new Entry("- SHIELDS_+10_____150", 47, 150, PlayerState.PICKUP_SHIELDS, 10),
+        new Entry("- ENERGY_+100_____200", 54, 200, PlayerState.PICKUP_ENERGY, 100),
+        new Entry("- GREEN_KEY______5000", 61, 5000, PlayerState.PICKUP_GREEN_KEY, 1),
+        new Entry("- YELLOW_KEY_____5000", 68, 5000, PlayerState.PICKUP_YELLOW_KEY, 1),
+        new Entry("- RED_KEY________5000", 75, 5000, PlayerState.PICKUP_RED_KEY, 1),
+        new Entry("- BLUE_KEY_______5000", 82, 5000, PlayerState.PICKUP_BLUE_KEY, 1),
         new Entry("- EXIT", 89, 0, -1, 0),
     };
 
@@ -123,20 +123,16 @@ public final class Terminal {
         open = false;
     }
 
-    /** Monte d'une ligne, sans sortir de la liste. */
+    /** Monte d'une ligne ; au-dessus de la premiere, on passe a la derniere ({@code Tkeyup}). */
     public void up() {
-        if (selection > 0) {
-            selection--;
-            refused = false;
-        }
+        selection = Math.floorMod(selection - 1, entries().length);
+        refused = false;
     }
 
-    /** Descend d'une ligne, sans sortir de la liste. */
+    /** Descend d'une ligne ; au-dessous de la derniere, on revient a la premiere. */
     public void down() {
-        if (selection < entries().length - 1) {
-            selection++;
-            refused = false;
-        }
+        selection = Math.floorMod(selection + 1, entries().length);
+        refused = false;
     }
 
     /**
@@ -188,7 +184,24 @@ public final class Terminal {
             return false;   // CollectWeapon refuse une arme deja possedee
         }
         weapons.give(entry.target());
-        return weapons.owns(entry.target());
+        if (weapons.owns(entry.target())) {
+            boughtWeapon = entry.target();
+            return true;
+        }
+        return false;
+    }
+
+    /** {@code PlayerBuyWeapon} : la derniere arme achetee, ou -1. */
+    private int boughtWeapon = -1;
+
+    /**
+     * L'arme achetee pendant cette visite, ou -1. A la fermeture du terminal, la boucle
+     * principale la prend en main ({@code ChangeWeapon}). L'appel efface la reponse.
+     */
+    public int takeBoughtWeapon() {
+        int weapon = boughtWeapon;
+        boughtWeapon = -1;
+        return weapon;
     }
 
     private boolean buyBoost(Entry entry) {

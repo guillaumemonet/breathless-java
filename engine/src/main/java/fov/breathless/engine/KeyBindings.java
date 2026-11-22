@@ -19,25 +19,31 @@ public final class KeyBindings {
     public record Binding(String action, String label, int code) {
     }
 
-    /** Les commandes redefinissables, dans l'ordre ou le menu les presente. */
+    /**
+     * Les commandes redefinissables, dans l'ordre ou {@code conf_page3} les presente. La
+     * carte, la pause et les armes ont des touches fixes, que la page refuse d'affecter.
+     */
     public static final String[] ACTIONS = {
         "avant", "arriere", "gauche", "droite",
-        "courir", "pas-de-cote", "tirer", "actionner",
-        "carte", "arme-suivante",
+        "pas-gauche", "pas-droite", "tirer", "courir", "pas-de-cote",
+        "regard-haut", "regard-centre", "regard-bas", "actionner",
     };
 
-    /** Libelles courts, pour tenir sur le moniteur. */
-    private static final Map<String, String> TITLES = Map.of(
-        "avant", "FORWARD",
-        "arriere", "BACKWARD",
-        "gauche", "LEFT",
-        "droite", "RIGHT",
-        "courir", "RUN",
-        "pas-de-cote", "SIDESTEP",
-        "tirer", "FIRE",
-        "actionner", "ACTION",
-        "carte", "MAP",
-        "arme-suivante", "NEXT WEAPON");
+    /** Les libelles de {@code conf_page3}. */
+    private static final Map<String, String> TITLES = Map.ofEntries(
+        Map.entry("avant", "FORWARDS"),
+        Map.entry("arriere", "BACKWARDS"),
+        Map.entry("gauche", "ROTATE LEFT"),
+        Map.entry("droite", "ROTATE RIGHT"),
+        Map.entry("pas-gauche", "SIDESTEP LEFT"),
+        Map.entry("pas-droite", "SIDESTEP RIGHT"),
+        Map.entry("tirer", "FIRE"),
+        Map.entry("courir", "ACCELERATION"),
+        Map.entry("pas-de-cote", "FORCE SIDESTEP"),
+        Map.entry("regard-haut", "LOOK UP"),
+        Map.entry("regard-centre", "RESET LOOK"),
+        Map.entry("regard-bas", "LOOK DOWN"),
+        Map.entry("actionner", "SWITCH"));
 
     private final Map<String, Binding> bindings = new LinkedHashMap<>();
 

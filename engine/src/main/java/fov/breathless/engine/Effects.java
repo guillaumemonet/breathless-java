@@ -59,6 +59,18 @@ public final class Effects {
     private static final int STATE_PAUSE = 2;
     private static final int STATE_BACK = 3;
 
+    /**
+     * Effet termine, a retirer au passage suivant, et dont le trigger peut repartir.
+     * {@code StopEffect1}.
+     */
+    private static final int STATE_ENDED = -1;
+
+    /**
+     * Effet termine pour de bon : son trigger ne pourra plus le rejouer.
+     * {@code StopEffect2} — un plafond qui descend ne redescend pas a chaque passage.
+     */
+    private static final int STATE_ENDED_FOR_GOOD = -2;
+
     private static final class Slot {
         int effect;
         int trigger;
@@ -75,11 +87,32 @@ public final class Effects {
 
     private final World world;
     private final Level level;
-    /** Graine fixe : deux parties identiques doivent clignoter pareil. */
-    private final java.util.Random random = new java.util.Random(0x8115);
+    /** Le generateur partage du moteur : les neons tirent dans la meme suite que les ennemis. */
+    private Rnd rnd = new Rnd();
+
+    /** Partage le generateur du niveau. */
+    public void setRnd(Rnd rnd) {
+        this.rnd = rnd;
+    }
     private final int[][] blocksByTrigger = new int[TRIGGERS][];
     private final int[] runningByTrigger = new int[TRIGGERS];
     private final Slot[] slots = new Slot[MAX_ACTIVE];
+
+    /**
+     * Un ennemi se tient sur un bloc du trigger. Bit 15 du mot de commande de
+     * {@code TriggerBlockListPun} : une porte qui se ferme se rouvre, une porte en pause
+     * attend.
+     */
+    private final boolean[] enemyOnTrigger = new boolean[TRIGGERS];
+
+    /** Etat du joueur, pour les cles. {@code null} : aucune cle n'est exigee. */
+    private PlayerState player;
+
+    /** Message demande par l'effet, indice de la table {@code Messages}, ou -1. */
+    private int messageRequest = -1;
+
+    /** Le message d'une cle manquante : {@code addq.w #3,d1}, cle comptee de 1 a 4. */
+    public static final int MESSAGE_KEY_BASE = 3;
 
     /** Effets rencontres mais pas encore portes, pour ne les signaler qu'une fois. */
     private final boolean[] reported = new boolean[32];
@@ -158,6 +191,32 @@ public final class Effects {
         this.sound = (player == null) ? SoundPlayer.SILENT : player;
     }
 
+    /** Branche l'etat du joueur : sans lui, les portes a cle s'ouvrent sans cle. */
+    public void setPlayerState(PlayerState state) {
+        this.player = state;
+    }
+
+    /**
+     * Le message que l'effet demande d'afficher — une cle manquante —, ou -1.
+     *
+     * <p>L'appel efface la demande.
+     */
+    public int takeMessageRequest() {
+        int request = messageRequest;
+        messageRequest = -1;
+        return request;
+    }
+
+    /** {@code StartDoorSoundFX} : le bruit de porte, sur le canal du trigger. */
+    private void startDoorSound(Slot slot) {
+        sound.playGlobalOn(fov.breathless.gld.sound.Sound.GLOBAL_DOOR_START, slot.trigger);
+    }
+
+    /** {@code StopDoorSoundFX} : le choc de fin de course, sur le meme canal. */
+    private void stopDoorSound(Slot slot) {
+        sound.playGlobalOn(fov.breathless.gld.sound.Sound.GLOBAL_DOOR_STOP, slot.trigger);
+    }
+
     /** Case visee par une teleportation en attente, ou {@code null}. */
     private int[] teleportRequest;
 
@@ -199,13 +258,33 @@ public final class Effects {
             slot.status = STATE_OUT;
             slot.counter = TELEPORT_TICKS;
             sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_TELEPORT);
+            fade.teleport();
         }
         slot.counter -= ticks;
         if (slot.counter > 0) {
             return;
         }
         teleportRequest = new int[]{slot.param1, slot.param2};
-        stop(slot);
+        end(slot, STATE_ENDED);
+    }
+
+    /** Le fondu de l'image, partage avec la simulation. */
+    private Fade fade = new Fade();
+
+    /** Partage le fondu de la simulation : la teleportation le declenche. */
+    public void setFade(Fade fade) {
+        this.fade = fade;
+    }
+
+    /**
+     * Une teleportation gele-t-elle le jeu ?
+     *
+     * <p>{@code Teleport} met {@code ProgramState} a -1, et seule la fin du fondu le
+     * remet : le joueur et les ennemis restent figes tout le temps du fondu, aller et
+     * retour, et pas seulement jusqu'au deplacement.
+     */
+    public boolean isTeleporting() {
+        return fade.freezesGame();
     }
 
     /**
@@ -219,9 +298,15 @@ public final class Effects {
     private void linkedLight(Slot slot, int[] blocks) {
         if (slot.status == STATE_NEW) {
             Slot target = running(slot.param2);
-            if (target == null || target.status == STATE_NEW || target.param1 == 0) {
-                // L'effet suivi n'est pas encore parti, ou n'a pas de course : on attend
-                // le pas suivant, comme l'original qui repasse par l'initialisation.
+            if (target == null || target.status == STATE_NEW) {
+                // L'effet suivi n'est pas encore parti : on attend le pas suivant, comme
+                // l'original qui repasse par l'initialisation.
+                return;
+            }
+            if (target.param1 == 0) {
+                // Course nulle : rien a suivre, et l'original s'arrete pour de bon plutot
+                // que de diviser par zero.
+                end(slot, STATE_ENDED_FOR_GOOD);
                 return;
             }
             slot.linked = target;
@@ -230,14 +315,22 @@ public final class Effects {
         }
 
         Slot target = slot.linked;
-        // L'emplacement peut avoir ete repris par un autre effet depuis : on verifie que
-        // c'est toujours celui qu'on suit.
-        if (target == null || target.effect == 0 || target.trigger != slot.param2) {
-            // L'effet suivi s'est arrete : on rend l'eclairage d'origine.
+        // Un effet termine reste un passage avec son statut negatif avant d'etre retire :
+        // c'est la qu'on lit comment il a fini. L'emplacement repris par un autre effet ne
+        // devrait pas arriver, mais on le traite comme une fin ordinaire.
+        boolean gone = target == null || target.effect == 0 || target.trigger != slot.param2;
+        if (gone || target.status < 0) {
+            if (!gone && target.status == STATE_ENDED_FOR_GOOD) {
+                // LLend : l'effet suivi est bloque definitivement — une porte qui reste
+                // ouverte. La piece garde la lumiere qu'elle a, et l'on s'arrete aussi pour
+                // de bon.
+                end(slot, STATE_ENDED_FOR_GOOD);
+                return;
+            }
             for (int block : blocks) {
                 world.setLight(block, slot.restoreLight);
             }
-            stop(slot);
+            end(slot, STATE_ENDED);
             return;
         }
 
@@ -335,8 +428,7 @@ public final class Effects {
         }
 
         world.toggleEdge(block.edge(edgeNumber));
-        sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_SWITCH);
-        trigger(block.effectList());
+        trigger(block.effectList(), true);
         return true;
     }
 
@@ -360,8 +452,29 @@ public final class Effects {
         return unimplemented;
     }
 
-    /** Declenche une liste d'effets par son numero, 1-based. */
+    /** Declenche une liste d'effets par son numero, 1-based, comme le fait le sol. */
     public void trigger(int effectList) {
+        trigger(effectList, false);
+    }
+
+    /** Declenche une liste comme le fait un interrupteur : cles exigees. */
+    void triggerFromSwitch(int effectList) {
+        trigger(effectList, true);
+    }
+
+    /**
+     * Declenche une liste d'effets.
+     *
+     * <p>Deux chemins dans l'original, qui ne different que sur deux points. Celui de
+     * l'interrupteur ({@code SwitchManagement}) exige la cle que porte l'entree — sans
+     * elle, l'effet est annule, le message « cle requise » s'affiche et le reste de la
+     * liste est abandonne ; avec elle, la cle est consommee — et joue le clic pour chaque
+     * effet reellement lance. Celui du sol ({@code DoMovement}) ignore la cle.
+     *
+     * <p>Un trigger ne peut pas rejouer l'effet qu'il est en train de jouer, ni celui
+     * qu'il a fini pour de bon : {@code StopEffect2} ne lui rend jamais la main.
+     */
+    private void trigger(int effectList, boolean bySwitch) {
         if (effectList <= 0 || effectList > level.effectLists().size()) {
             return;
         }
@@ -369,9 +482,16 @@ public final class Effects {
             if (entry.trigger() <= 0 || entry.trigger() >= TRIGGERS) {
                 continue;
             }
-            // Un trigger ne peut pas rejouer l'effet qu'il est deja en train de jouer.
             if (runningByTrigger[entry.trigger()] == entry.effect()) {
                 continue;
+            }
+            if (bySwitch && entry.key() >= 1 && entry.key() <= 4 && player != null) {
+                int key = PlayerState.PICKUP_GREEN_KEY + entry.key() - 1;
+                if (!player.hasKey(key)) {
+                    messageRequest = MESSAGE_KEY_BASE + entry.key();
+                    return;
+                }
+                usedKeys[entry.key() - 1] = true;
             }
             Slot slot = freeSlot();
             if (slot == null) {
@@ -386,8 +506,26 @@ public final class Effects {
             slot.fraction = 0;
             slot.linked = null;
             runningByTrigger[entry.trigger()] = entry.effect();
+            if (bySwitch) {
+                sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_SWITCH);
+            }
+        }
+        if (!bySwitch || player == null) {
+            return;
+        }
+        // SMtstkloop : les cles marquees ne sont retirees qu'une fois la liste parcourue
+        // jusqu'au bout. Une liste abandonnee faute de cle les laisse marquees : elles
+        // partiront a la prochaine liste menee a terme.
+        for (int key = 0; key < usedKeys.length; key++) {
+            if (usedKeys[key]) {
+                usedKeys[key] = false;
+                player.dropKey(PlayerState.PICKUP_GREEN_KEY + key);
+            }
         }
     }
+
+    /** {@code GreenKeyFL} et suivants : cles employees, en attente d'etre retirees. */
+    private final boolean[] usedKeys = new boolean[4];
 
     private Slot freeSlot() {
         for (Slot slot : slots) {
@@ -417,14 +555,81 @@ public final class Effects {
      * @param objects     objets du niveau, pour le reveil des ennemis
      */
     public void update(int ticks, int playerBlock, List<SceneObject> objects) {
+        markObjectsOnTriggers(objects);
         for (Slot slot : slots) {
-            if (slot.effect != 0) {
-                run(slot, ticks, playerBlock, objects);
+            if (slot.effect == 0) {
+                continue;
+            }
+            if (slot.status < 0) {
+                remove(slot);
+                continue;
+            }
+            run(slot, ticks, playerBlock, objects);
+        }
+    }
+
+    /**
+     * Releve les ennemis debout et les restes poses sur des blocs a trigger.
+     *
+     * <p>{@code MNnext} pose le bit 15 du mot de commande pour chaque ennemi qui se tient
+     * sur un tel bloc ; {@code AWnext} l'efface apres chaque passe. Les restes d'un ennemi
+     * mort y inscrivent leur numero, pour que la porte les fasse disparaitre en se
+     * fermant ({@code RemoveRemains}). Le releve se refait donc a chaque pas.
+     */
+    private void markObjectsOnTriggers(List<SceneObject> objects) {
+        java.util.Arrays.fill(enemyOnTrigger, false);
+        if (objects == null) {
+            return;
+        }
+        for (SceneObject object : objects) {
+            if (object.isCollected() || object.isDormant()) {
+                continue;
+            }
+            boolean enemy = !object.isRemains() && object.definition().objectType()
+                    == fov.breathless.gld.object.ObjectDefinition.TYPE_ENEMY;
+            if (!enemy && !object.isRemains()) {
+                continue;
+            }
+            int code = world.cell(Math.floorDiv(object.x(), Level.BLOCK_SIZE),
+                    Math.floorDiv(object.z(), Level.BLOCK_SIZE));
+            if (code == 0) {
+                continue;
+            }
+            int trigger = level.blocks().get(Math.abs(code)).trigger();
+            if (trigger <= 0 || trigger >= TRIGGERS) {
+                continue;
+            }
+            if (enemy) {
+                enemyOnTrigger[trigger] = true;
             }
         }
     }
 
+    /**
+     * {@code RemoveRemains} : une porte qui vient de se fermer fait disparaitre les restes
+     * restes pris sous elle.
+     */
+    private void removeRemains(int trigger, List<SceneObject> objects) {
+        if (objects == null) {
+            return;
+        }
+        for (SceneObject object : objects) {
+            if (!object.isRemains() || object.isCollected()) {
+                continue;
+            }
+            int code = world.cell(Math.floorDiv(object.x(), Level.BLOCK_SIZE),
+                    Math.floorDiv(object.z(), Level.BLOCK_SIZE));
+            if (code != 0 && level.blocks().get(Math.abs(code)).trigger() == trigger) {
+                object.collect();
+            }
+        }
+    }
+
+    /** Liste des objets du pas en cours, pour les portes qui se ferment. */
+    private List<SceneObject> currentObjects;
+
     private void run(Slot slot, int ticks, int playerBlock, List<SceneObject> objects) {
+        currentObjects = objects;
         // Le reveil d'ennemi vise des objets, pas des blocs : il se passe de liste.
         if (slot.effect == ACTIVE_ENEMY) {
             activateEnemies(slot, ticks, objects);
@@ -433,13 +638,13 @@ public final class Effects {
         // Le terminal ne touche pas au decor : il demande une ouverture et s'arrete.
         if (slot.effect == TERMINAL) {
             terminalRequest = slot.param1;
-            stop(slot);
+            end(slot, STATE_ENDED);
             return;
         }
 
         int[] blocks = blocksByTrigger[slot.trigger];
         if (blocks == null) {
-            stop(slot);
+            end(slot, STATE_ENDED);
             return;
         }
 
@@ -460,16 +665,20 @@ public final class Effects {
             case TELEPORT -> teleport(slot, ticks);
             case END_LEVEL -> {
                 levelFinished = true;
-                stop(slot);
+                end(slot, STATE_ENDED_FOR_GOOD);
             }
             default -> {
                 reportUnimplemented(slot.effect);
-                stop(slot);
+                end(slot, STATE_ENDED);
             }
         }
     }
 
-    /** Deplacement simple : le sol ou le plafond bouge de param1 unites, et c'est tout. */
+    /**
+     * Deplacement simple : le sol ou le plafond bouge de param1 unites, et c'est tout.
+     *
+     * <p>Definitif : {@code StopEffect2}. Repasser sur la dalle ne le rejoue pas.
+     */
     private void oneWay(Slot slot, int ticks, int[] blocks, boolean ceiling, int direction) {
         if (slot.status == STATE_NEW) {
             slot.status = STATE_OUT;
@@ -479,7 +688,7 @@ public final class Effects {
         move(blocks, ceiling, direction * step);
         slot.counter -= step;
         if (slot.counter <= 0) {
-            stop(slot);
+            end(slot, STATE_ENDED_FOR_GOOD);
         }
     }
 
@@ -503,37 +712,60 @@ public final class Effects {
             case STATE_NEW -> {
                 slot.status = STATE_OUT;
                 slot.counter = slot.param1;
-                // StartDoorSoundFX : le moteur d'origine lance ici le bruit de porte.
-                sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_DOOR_START);
+                startDoorSound(slot);
                 cycleOut(slot, ticks, blocks, motion);
             }
             case STATE_OUT -> cycleOut(slot, ticks, blocks, motion);
             case STATE_PAUSE -> {
-                // Le joueur present sous la porte suspend le decompte.
-                if (yieldsToPlayer && contains(blocks, playerBlock)) {
+                // Le joueur ou un ennemi sous la porte suspend le decompte. Un ascenseur
+                // n'a pas ce test : FUDpause decompte quoi qu'il arrive.
+                if (yieldsToPlayer
+                        && (contains(blocks, playerBlock) || enemyOnTrigger[slot.trigger])) {
                     return;
                 }
                 slot.counter -= ticks;
                 if (slot.counter <= 0) {
                     slot.counter = slot.param1;
                     slot.status = STATE_BACK;
+                    startDoorSound(slot);
                 }
             }
             case STATE_BACK -> {
+                if (yieldsToPlayer && enemyOnTrigger[slot.trigger]) {
+                    // DUenemystop : un ennemi passe dessous, la porte repart vers le haut.
+                    reopen(slot);
+                    return;
+                }
                 int step = Math.min(ticks, slot.counter);
                 move(blocks, motion, -step);
                 if (yieldsToPlayer && contains(blocks, playerBlock)) {
-                    // Le joueur s'est glisse dessous : on remet tout en place et on attend.
+                    // DUplayerstop : le joueur s'est glisse dessous. Le pas est annule et
+                    // la porte se rouvre entierement, puis refait sa pause.
                     move(blocks, motion, step);
+                    reopen(slot);
                     return;
                 }
                 slot.counter -= step;
                 if (slot.counter <= 0) {
-                    stop(slot);
+                    stopDoorSound(slot);
+                    if (yieldsToPlayer) {
+                        removeRemains(slot.trigger, currentObjects);
+                    }
+                    end(slot, STATE_ENDED);
                 }
             }
-            default -> stop(slot);
+            default -> end(slot, STATE_ENDED);
         }
+    }
+
+    /**
+     * La porte repart dans l'autre sens pour la course deja refaite.
+     *
+     * <p>{@code move.w #1,ef_status / ef_var1 = param1 - ef_var1}.
+     */
+    private static void reopen(Slot slot) {
+        slot.status = STATE_OUT;
+        slot.counter = slot.param1 - slot.counter;
     }
 
     private void cycleOut(Slot slot, int ticks, int[] blocks, Motion motion) {
@@ -541,8 +773,10 @@ public final class Effects {
         move(blocks, motion, step);
         slot.counter -= step;
         if (slot.counter <= 0) {
+            stopDoorSound(slot);
             if (slot.param2 == 0) {
-                stop(slot);   // pause nulle : reste ouvert
+                // Pause nulle : la porte reste ouverte, et pour de bon.
+                end(slot, STATE_ENDED_FOR_GOOD);
                 return;
             }
             slot.counter = slot.param2;
@@ -557,24 +791,36 @@ public final class Effects {
     private void light(Slot slot, int ticks, int[] blocks, int direction) {
         if (slot.status == STATE_NEW) {
             slot.status = STATE_OUT;
-            slot.counter = slot.param1 << 8;
+            slot.counter = (slot.param1 << 8) & 0xFFFF;
             slot.param2 = (slot.param2 == 0) ? slot.counter : (slot.counter / slot.param2);
             slot.fraction = 0;
         }
-        int change = Math.min(slot.param2 * ticks, slot.counter);
-        slot.counter -= change;
+        int change = Math.min(Math.min(slot.param2 * ticks, 0x7FFF), slot.counter);
+        int consumed = change;
 
-        slot.fraction += change & 0xFF;
-        int whole = (change >> 8) + (slot.fraction >> 8);
-        slot.fraction &= 0xFF;
-
-        if (whole != 0) {
-            for (int block : blocks) {
-                world.changeLight(block, direction * whole);
-            }
+        // sub.b d2,ef_var2 / bcc / add.w #$100,d2 : la retenue de la partie decimale
+        // ajoute une unite a la partie entiere.
+        int low = change & 0xFF;
+        if ((slot.fraction & 0xFF) < low) {
+            change += 0x100;
         }
+        slot.fraction = (slot.fraction - low) & 0xFF;
+        int whole = (change & 0xFFFF) >>> 8;
+
+        // Dans le moteur, une valeur d'eclairage plus haute est plus sombre : LightUp
+        // soustrait, LightDown ajoute. L'octet est lu sans signe, et un debordement dans
+        // un sens comme dans l'autre le ramene a zero.
+        for (int block : blocks) {
+            int value = world.lightOffset(block) & 0xFF;
+            value = (direction > 0) ? value - whole : value + whole;
+            if (value < 0 || value > 0xFF) {
+                value = 0;
+            }
+            world.setLight(block, (byte) value);
+        }
+        slot.counter -= consumed;
         if (slot.counter <= 0) {
-            stop(slot);
+            end(slot, STATE_ENDED_FOR_GOOD);
         }
     }
 
@@ -605,7 +851,7 @@ public final class Effects {
         } else {
             value = slot.restoreLight;
             slot.status = STATE_OUT;
-            slot.counter = (slot.param2 != 0) ? slot.param2 : random.nextInt(3 * 50);
+            slot.counter = (slot.param2 != 0) ? slot.param2 : rnd.next(3 * 50);
         }
         for (int block : blocks) {
             world.setLight(block, value);
@@ -622,17 +868,21 @@ public final class Effects {
         if (slot.counter > 0) {
             return;
         }
+        // ActiveEnemy ne parcourt que la liste des ennemis : un ramassable porteur d'un
+        // trigger n'a jamais ete en attente, voir Simulation.collectPickups.
         for (SceneObject object : objects) {
-            if (object.dormantTrigger() == slot.trigger) {
+            if (object.dormantTrigger() == slot.trigger && object.isDormant()
+                    && object.definition().objectType()
+                    == fov.breathless.gld.object.ObjectDefinition.TYPE_ENEMY) {
                 object.awaken();
-                // ActiveEnemy joue le premier son de l'objet en le reveillant.
+                // ObjBufferedPlaySoundFX : le premier son de l'objet, depuis sa position.
                 java.util.List<String> names = object.definition().sounds();
                 if (!names.isEmpty() && names.get(0) != null && !names.get(0).isBlank()) {
-                    sound.play(names.get(0));
+                    sound.playAt(names.get(0), object.x(), object.z());
                 }
             }
         }
-        stop(slot);
+        end(slot, STATE_ENDED_FOR_GOOD);
     }
 
     private void move(int[] blocks, boolean ceiling, int delta) {
@@ -694,8 +944,24 @@ public final class Effects {
         return false;
     }
 
-    private void stop(Slot slot) {
-        runningByTrigger[slot.trigger] = 0;
+    /**
+     * Termine un effet. Il reste un passage avec son statut negatif — c'est la que les
+     * lumieres liees lisent comment il a fini — puis {@link #remove} le retire.
+     *
+     * @param how {@link #STATE_ENDED} ou {@link #STATE_ENDED_FOR_GOOD}
+     */
+    private static void end(Slot slot, int how) {
+        slot.status = how;
+    }
+
+    /**
+     * {@code RemoveEffect} : libere l'emplacement, et ne rend la main au trigger que si
+     * l'effet n'a pas fini pour de bon.
+     */
+    private void remove(Slot slot) {
+        if (slot.status != STATE_ENDED_FOR_GOOD) {
+            runningByTrigger[slot.trigger] = 0;
+        }
         slot.effect = 0;
         slot.status = STATE_NEW;
         slot.linked = null;

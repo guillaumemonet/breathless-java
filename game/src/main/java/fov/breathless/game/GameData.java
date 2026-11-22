@@ -32,10 +32,11 @@ final class GameData {
     private final PlanarImage panel;
     private final SoundBank sounds;
     private final PlanarImage backdrop;
+    private final fov.breathless.gld.MasterFile master;
 
     private GameData(GfxBank gfx, TextureBank textures, ObjectBank objects, List<Level> levels,
                      PlanarImage panel, SoundBank sounds,
-                     PlanarImage backdrop) {
+                     PlanarImage backdrop, fov.breathless.gld.MasterFile master) {
         this.gfx = gfx;
         this.textures = textures;
         this.objects = objects;
@@ -43,6 +44,12 @@ final class GameData {
         this.panel = panel;
         this.sounds = sounds;
         this.backdrop = backdrop;
+        this.master = master;
+    }
+
+    /** Fichier maitre : noms des mondes et des niveaux, ou {@code null} s'il manque. */
+    fov.breathless.gld.MasterFile master() {
+        return master;
     }
 
     /** Tenture de fond, derriere une fenetre reduite, ou {@code null}. */
@@ -75,6 +82,7 @@ final class GameData {
         ObjectBank objects = null;
         SoundBank sounds = null;
         List<Level> levels = new ArrayList<>();
+        fov.breathless.gld.MasterFile master = null;
 
         try (var stream = Files.list(directory)) {
             for (Path file : stream.filter(Files::isRegularFile)
@@ -88,6 +96,7 @@ final class GameData {
                     case ObjectBank.OGLD -> objects = ObjectBank.read(gld);
                     case LevelReader.LGLD -> levels.add(LevelReader.read(gld));
                     case SoundBank.SGLD -> sounds = SoundBank.read(gld);
+                    case fov.breathless.gld.MasterFile.MGLD -> master = fov.breathless.gld.MasterFile.read(gld);
                     default -> {
                         // Rien d'autre a lire.
                     }
@@ -120,7 +129,7 @@ final class GameData {
         PlanarImage backdrop = (backdropFile == null) ? null
                 : RawPictures.readBackdrop(backdropFile);
 
-        return new GameData(gfx, textures, objects, levels, panel, sounds, backdrop);
+        return new GameData(gfx, textures, objects, levels, panel, sounds, backdrop, master);
     }
 
     GfxBank gfx() {

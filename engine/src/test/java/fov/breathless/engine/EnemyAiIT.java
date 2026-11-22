@@ -177,24 +177,34 @@ class EnemyAiIT {
                     assertTrue(cellZ >= 0 && cellZ < Level.MAP_SIZE, where + " hors carte");
                     assertTrue(!level.isWall(cellX, cellZ), where + " dans un mur");
                     assertTrue(!level.isVoid(cellX, cellZ), where + " dans le vide");
-                    assertTrue(object.animCounter() >= 0 && object.animCounter() < 16,
-                            where + " : pose hors du cycle de marche");
+                    // Une pose negative de statut : tir (40), chute (42-44), sol (129).
+                    // Sinon, l'une des huit poses de marche.
+                    if (object.status() >= 0) {
+                        assertTrue(object.animCounter() >= 0 && object.animCounter() < 8,
+                                where + " : pose hors du cycle de marche");
+                    }
                 }
             }
         }
     }
 
     @Test
-    @DisplayName("Les seize poses du cycle de marche defilent")
+    @DisplayName("Les huit poses du cycle de marche defilent, au rythme de l'horloge")
     void walkCycleAdvances() throws IOException {
         Standoff standoff = standoff(fixture());
         Assumptions.assumeTrue(standoff != null, "aucun face-a-face exploitable");
 
-        boolean[] seen = new boolean[16];
+        // WALKANIM : (VBTimer & $1C) >> 2. Huit poses, les huit autres cases de chaque
+        // octant etant des images de tir et de chute.
+        boolean[] seen = new boolean[8];
         PlayerInput input = new PlayerInput();
         for (int tick = 0; tick < 600; tick++) {
             standoff.simulation().tick(input);
-            seen[standoff.enemy().animCounter()] = true;
+            SceneObject enemy = standoff.enemy();
+            if (enemy.status() >= 0 && enemy.status() != 5) {
+                assertTrue(enemy.animCounter() < 8, "pose de marche hors du cycle");
+                seen[enemy.animCounter()] = true;
+            }
         }
 
         int count = 0;
@@ -203,7 +213,40 @@ class EnemyAiIT {
                 count++;
             }
         }
-        assertEquals(16, count, "les seize poses devraient toutes avoir ete jouees");
+        assertEquals(8, count, "les huit poses devraient toutes avoir ete jouees");
+    }
+
+    @Test
+    @DisplayName("Un ennemi qui s'arrete pour tirer prend sa pose de tir, et ne decide pas a chaque pas")
+    void enemiesTakeTheFirePoseAndHoldDecisions() throws IOException {
+        Standoff standoff = standoff(fixture());
+        Assumptions.assumeTrue(standoff != null, "aucun face-a-face exploitable");
+        SceneObject enemy = standoff.enemy();
+        boolean stopsToFire = (enemy.definition().param(10) & 1) == 0;
+
+        PlayerInput input = new PlayerInput();
+        boolean fired = false;
+        int headingChanges = 0;
+        int previousHeading = enemy.heading();
+        for (int tick = 0; tick < 1500 && enemy.strength() > 0; tick++) {
+            standoff.simulation().tick(input);
+            if (enemy.status() == -1) {
+                fired = true;
+                if (stopsToFire) {
+                    assertEquals(40, enemy.animCounter(), "pas de pose de tir");
+                    assertEquals(0, enemy.speed(), "l'ennemi devrait s'arreter pour tirer");
+                }
+            }
+            if (enemy.heading() != previousHeading) {
+                headingChanges++;
+                previousHeading = enemy.heading();
+            }
+        }
+        assertTrue(fired, "l'ennemi n'a jamais tire");
+        // Une decision tous les trois a quarante-sept passages, un passage tous les deux
+        // pas : bien moins d'un changement de cap par pas.
+        assertTrue(headingChanges < 1500 / 6,
+                "l'ennemi change de cap trop souvent : " + headingChanges);
     }
 
     private static int distance(SceneObject enemy, Camera camera) {
@@ -240,13 +283,14 @@ class EnemyAiIT {
         enemy.awaken();
         world.objects().clear();
         world.objects().add(enemy);
+        // L'IA met les ennemis dans leur etat de depart : elle doit exister avant le coup.
+        EnemyAi ai = new EnemyAi(world);
 
         assertTrue(EnemyAi.kill(enemy, 512), "la chute n'a pas commence");
         assertEquals(42, enemy.animCounter(), "la chute demarre a la quarante-deuxieme image");
         assertEquals(512, enemy.heading(), "le corps tombe dans la direction du tir");
         assertFalse(enemy.isRemains(), "il n'est pas encore au sol");
 
-        EnemyAi ai = new EnemyAi(world);
         PlayerState state = new PlayerState();
         for (int tick = 0; tick < 200 && !enemy.isRemains(); tick++) {
             ai.update(camera, state, null);

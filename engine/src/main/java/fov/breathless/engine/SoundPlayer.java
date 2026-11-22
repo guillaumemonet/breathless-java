@@ -47,6 +47,28 @@ public interface SoundPlayer {
      */
     void playGlobal(int code);
 
+    /**
+     * Joue un son global sur le canal d'un code — le numero de trigger d'une porte. Un
+     * nouveau son sur le meme code remplace le precedent : c'est ainsi que le choc de fin
+     * de course coupe le roulement de la porte ({@code AUDx_code} dans Audio.asm).
+     */
+    default void playGlobalOn(int code, int channel) {
+        playGlobal(code);
+    }
+
+    /**
+     * Joue un bruitage emis depuis un point du monde. Le volume baisse avec la distance au
+     * joueur ({@code AllocSoundFX}).
+     */
+    default void playAt(String name, int x, int z) {
+        play(name);
+    }
+
+    /** Position du joueur, d'ou se mesure la distance des sons emis dans le monde. */
+    default void setListener(int x, int z) {
+        // Sans effet pour un lecteur qui ne tient pas compte de la distance.
+    }
+
     /** Arrete un son qui boucle, comme celui du lance-flammes. */
     void stop(String name);
 

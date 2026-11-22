@@ -53,20 +53,58 @@ public final class Monitor {
         }
     }
 
-    /** Imprime une ligne, ombre portee d'abord, comme {@code SprPrint}. */
+    /**
+     * Imprime une ligne, ombre portee d'abord, comme {@code SprPrint}.
+     *
+     * <p>Une espace n'avance que de quatre pixels ; le trait bas, invisible, avance d'une
+     * pleine largeur de caractere. Les textes d'origine s'en servent pour aligner leurs
+     * colonnes.
+     */
     public static void print(byte[] target, int width, int height,
                              int x, int y, String text, int colour) {
+        int left = LEFT + x;
         for (int i = 0; i < text.length(); i++) {
-            int left = LEFT + x + i * MonitorFont.ADVANCE;
-            glyph(target, width, height, left + 1, TOP + y + 1, text.charAt(i), COLOUR_SHADOW);
-            glyph(target, width, height, left, TOP + y, text.charAt(i), colour);
+            char character = text.charAt(i);
+            if (character != ' ' && character != '_') {
+                glyph(target, width, height, left + 1, TOP + y + 1, character, COLOUR_SHADOW);
+                glyph(target, width, height, left, TOP + y, character, colour);
+            }
+            left += advance(character);
         }
     }
 
+    /** {@code SIPspace} et {@code SIPspace2} : l'avance d'un caractere. */
+    public static int advance(char character) {
+        return (character == ' ') ? SPACE_ADVANCE : MonitorFont.ADVANCE;
+    }
+
+    /** Avance d'une espace. */
+    public static final int SPACE_ADVANCE = 4;
+
     /** Largeur d'un texte, en pixels. */
     public static int textWidth(String text) {
-        return text.length() * MonitorFont.ADVANCE;
+        int total = 0;
+        for (int i = 0; i < text.length(); i++) {
+            total += advance(text.charAt(i));
+        }
+        return total;
     }
+
+    /**
+     * Imprime un texte en transparence, sans fond : les messages du jeu,
+     * {@code SprDelayPrintMessage}, poses en haut de la vue.
+     *
+     * @param shown nombre de caracteres deja imprimes — l'original en imprime un par
+     *              vingt-cinquieme de seconde
+     */
+    public static void printMessage(byte[] target, int width, int height,
+                                    String text, int shown) {
+        print(target, width, height, 0, MESSAGE_ROW, text.substring(0, Math.min(shown, text.length())),
+                COLOUR_TEXT);
+    }
+
+    /** Ligne des messages en jeu : {@code move.w #8,(a1)+}. */
+    public static final int MESSAGE_ROW = 8;
 
     private static void glyph(byte[] target, int width, int height,
                               int x, int y, char character, int colour) {

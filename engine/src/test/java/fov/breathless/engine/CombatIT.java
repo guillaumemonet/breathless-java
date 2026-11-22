@@ -191,12 +191,15 @@ class CombatIT {
                 simulation.tick(input);
                 input.fire = false;
 
+                // Seuls comptent les tirs du joueur : les ennemis a portee, eux, ne cessent
+                // pas de tirer.
                 int ticks = 0;
-                while (!world.projectiles().isEmpty() && ticks < 600) {
+                while (world.projectiles().stream().anyMatch(Projectile::isFromPlayer)
+                        && ticks < 600) {
                     simulation.tick(input);
                     ticks++;
                 }
-                assertTrue(world.projectiles().isEmpty(),
+                assertTrue(world.projectiles().stream().noneMatch(Projectile::isFromPlayer),
                         level.name() + " cap " + turn + " : un tir ne s'arrete jamais");
             }
         }

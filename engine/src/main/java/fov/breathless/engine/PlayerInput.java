@@ -17,6 +17,21 @@ public final class PlayerInput {
     /** Transforme la rotation gauche/droite en pas de cote. */
     public boolean strafe;
 
+    /**
+     * Pas de cote dedies, {@code sideleft} et {@code sideright}. Contrairement a
+     * {@link #strafe}, ils laissent gauche et droite faire tourner : on peut tourner et se
+     * decaler a la fois.
+     */
+    public boolean sideLeft;
+    public boolean sideRight;
+
+    /** Regard vers le haut ou vers le bas, tant que la touche est tenue. */
+    public boolean lookUp;
+    public boolean lookDown;
+
+    /** Remet le regard a l'horizontale ({@code KIresetlook}), consomme au premier pas. */
+    public boolean lookReset;
+
     /** Course plutot que marche : vitesse et vitesse de rotation plus elevees. */
     public boolean run;
 
@@ -49,6 +64,11 @@ public final class PlayerInput {
         left = false;
         right = false;
         strafe = false;
+        sideLeft = false;
+        sideRight = false;
+        lookUp = false;
+        lookDown = false;
+        lookReset = false;
         run = false;
         fire = false;
         firePresses = 0;

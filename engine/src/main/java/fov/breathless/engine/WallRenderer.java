@@ -123,7 +123,8 @@ public final class WallRenderer {
                         world.edgeTexture(edgeIndex, edge.lowTexture()),
                         world.textureFrame(edge.lowTexture()),
                         floorCurrent - floorPrevious,
-                        brushColumn, edge.isLowerUnpegged(), shading, light, clipMin, clipMax);
+                        brushColumn, edge.isLowerUnpegged(), shading, light, clipMin, clipMax,
+                        distance);
                 clipMax = Math.min(clipMax, Math.max(yFloorCurrent, clipMin + 1));
             }
 
@@ -187,6 +188,15 @@ public final class WallRenderer {
     private void drawSpan(Framebuffer target, int column, int top, int pixels, Texture texture,
                           int frame, int wallHeight, int brushColumn, boolean unpegged,
                           LightingTable shading, int light, int clipMin, int clipMax) {
+        drawSpan(target, column, top, pixels, texture, frame, wallHeight, brushColumn, unpegged,
+                shading, light, clipMin, clipMax, 0);
+    }
+
+    /** @param distanceStep pas impose, la distance pour une texture basse ; 0 sinon */
+    private void drawSpan(Framebuffer target, int column, int top, int pixels, Texture texture,
+                          int frame, int wallHeight, int brushColumn, boolean unpegged,
+                          LightingTable shading, int light, int clipMin, int clipMax,
+                          int distanceStep) {
         if (texture == null || pixels <= 0 || wallHeight <= 0) {
             return;
         }
@@ -194,8 +204,15 @@ public final class WallRenderer {
         int brushHeight = texture.height();
         // La texture est posee a raison d'une ligne de brosse par unite monde ; un pan
         // plus haut que la brosse la repete verticalement.
-        int step = (int) ((((long) wallHeight) << 16) / pixels);
-        int accumulator = unpegged ? Math.max(0, brushHeight - wallHeight) << 16 : 0;
+        //
+        // La texture basse prend la distance pour pas : c'est ce que l'original a
+        // substitue a la division pour supprimer le tremblement des textures basses pres
+        // des portes et des ascenseurs (en-tete de DrawScreen.asm).
+        int step = (distanceStep > 0) ? distanceStep
+                : (int) ((((long) wallHeight) << 16) / pixels);
+        // Une texture alignee en bas part de (brosse - pan), meme negatif : le masque de
+        // repetition le ramene dans la brosse, et c'est bien le bas qui tombe juste.
+        int accumulator = unpegged ? (brushHeight - wallHeight) << 16 : 0;
 
         int first = Math.max(top, clipMin + 1);
         int last = Math.min(top + pixels - 1, clipMax - 1);

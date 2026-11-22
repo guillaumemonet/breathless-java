@@ -74,5 +74,7 @@ public final class Career {
                 weapons.powers(), weapons.active());
 
         state.clearKeys();
+        // clr.w RedScreenCont : une mort ne deborde pas en voile rouge sur la reprise.
+        state.resetLevelTimers();
     }
 }

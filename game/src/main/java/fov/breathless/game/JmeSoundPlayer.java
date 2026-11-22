@@ -23,9 +23,12 @@ import java.util.Random;
  * periode Amiga. OpenAL veut du huit bits <em>non</em> signe : il suffit de decaler de
  * cent vingt-huit, sans rien perdre.
  *
- * <p>Chaque son est prepare une fois puis rejoue. Les sons du jeu ne sont pas places dans
- * l'espace : l'original les joue sur quatre canaux sans notion de position, et le rendu
- * est en deux dimensions.
+ * <p>Chaque echantillon est prepare une fois puis rejoue. Les sons ne sont pas places en
+ * stereo : l'original les joue sur quatre canaux, et ne tient compte de la position d'un
+ * objet que pour le volume et la priorite.
+ *
+ * <p>Un son qui boucle reprend tout l'echantillon, la ou l'original ne reprend que la
+ * partie qui suit le point de boucle. Seul le lance-flammes boucle dans les donnees.
  */
 final class JmeSoundPlayer implements SoundPlayer {
 
@@ -51,7 +54,7 @@ final class JmeSoundPlayer implements SoundPlayer {
      * morceau se fait a l'ecart, mais sa mise en place revient ici.
      */
     private final java.util.function.Consumer<Runnable> onRenderThread;
-    private final Map<String, AudioNode> nodes = new HashMap<>();
+    private final Map<String, AudioBuffer> buffers = new HashMap<>();
     private final Random random = new Random();
     private AudioNode music;
     private volatile String pendingMusic;
@@ -95,8 +98,80 @@ final class JmeSoundPlayer implements SoundPlayer {
         this.onRenderThread = onRenderThread;
     }
 
+    /**
+     * Un des quatre canaux de Paula. {@code AUDx_sound}, {@code AUDx_priority},
+     * {@code AUDx_code}.
+     */
+    private static final class Channel {
+        AudioNode node;
+        Sound sound;
+        int priority;
+        int code;
+
+        boolean busy() {
+            return node != null && node.getStatus() == com.jme3.audio.AudioSource.Status.Playing;
+        }
+    }
+
+    private final Channel[] channels = {new Channel(), new Channel(), new Channel(), new Channel()};
+
+    /** Position du joueur, d'ou se mesure la distance des sons d'objets. */
+    private int listenerX;
+    private int listenerZ;
+
+    /** {@code ChgPriTable} : ce que la distance retire a la priorite, selon le volume. */
+    private static final int[] PRIORITY_LOSS = {
+        7,
+        6, 5, 4, 4, 3, 3, 3, 3, 2, 2, 2, 2, 2, 2, 2, 2,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    };
+
+    @Override
+    public void setListener(int x, int z) {
+        listenerX = x;
+        listenerZ = z;
+    }
+
     @Override
     public void play(String name) {
+        play(name, 0, 0);
+    }
+
+    @Override
+    public void playAt(String name, int x, int z) {
+        long dx = (short) (x - listenerX);
+        long dz = (short) (z - listenerZ);
+        play(name, dx * dx + dz * dz, 0);
+    }
+
+    @Override
+    public void playGlobal(int code) {
+        playGlobalOn(code, 0);
+    }
+
+    @Override
+    public void playGlobalOn(int code, int channelCode) {
+        Sound sound = bank.global(code);
+        if (sound != null) {
+            play(sound.name(), 0, channelCode);
+        }
+    }
+
+    /**
+     * Le serveur de sons ({@code SoundFXServer}) et {@code AllocSoundFX}.
+     *
+     * <p>Quatre canaux, comme la puce Paula. Le volume baisse avec la distance — plein
+     * jusqu'a une distance au carre de 32768, puis {@code 64 - d²/32768}, et le son est
+     * coupe au-dela de 1448 unites —, et la priorite avec lui. Un son prend un canal libre
+     * parmi ceux que son masque autorise, sinon chasse le premier dont la priorite n'est
+     * pas superieure a la sienne, sinon ne joue pas. Un son marque « seul » (bit 7 du
+     * masque) ne se relance pas tant qu'il joue deja. Un code non nul — le trigger d'une
+     * porte — ramene le son sur le canal qui porte deja ce code : le choc de fin de
+     * course coupe ainsi le roulement.
+     */
+    private void play(String name, long distanceSquared, int code) {
         if (!soundEnabled) {
             return;
         }
@@ -109,21 +184,83 @@ final class JmeSoundPlayer implements SoundPlayer {
             if (choices.length == 0) {
                 return;
             }
-            play(choices[random.nextInt(choices.length)]);
+            play(choices[random.nextInt(choices.length)], distanceSquared, code);
             return;
         }
-        AudioNode node = node(sound);
-        if (node != null) {
-            node.playInstance();
+        if (sound.type() == Sound.TYPE_MODULE) {
+            return;
         }
-    }
 
-    @Override
-    public void playGlobal(int code) {
-        Sound sound = bank.global(code);
-        if (sound != null) {
-            play(sound.name());
+        int mask = sound.channelMask();
+        if ((mask & 0x80) != 0) {
+            for (Channel channel : channels) {
+                if (channel.busy() && channel.sound == sound) {
+                    return;
+                }
+            }
         }
+
+        int level;
+        if (distanceSquared <= 32768) {
+            level = 64;
+        } else {
+            int far = (int) Math.min(64, distanceSquared >> 15);
+            if (far >= 64) {
+                return;
+            }
+            level = 64 - far;
+        }
+        int priority = (byte) (sound.priority() - PRIORITY_LOSS[level]);
+        int volume = (level * sound.volume()) >> 6;
+        if (volume <= 0) {
+            return;
+        }
+
+        int allowed = mask & 0x0F;
+        if (code != 0) {
+            for (int i = 0; i < channels.length; i++) {
+                if (channels[i].code == code) {
+                    allowed = 1 << i;
+                    break;
+                }
+            }
+        }
+
+        int chosen = -1;
+        for (int i = 0; i < channels.length && chosen < 0; i++) {
+            if ((allowed & (1 << i)) != 0 && !channels[i].busy()) {
+                chosen = i;
+            }
+        }
+        for (int i = 0; i < channels.length && chosen < 0; i++) {
+            if ((allowed & (1 << i)) != 0 && priority >= channels[i].priority) {
+                chosen = i;
+            }
+        }
+        if (chosen < 0) {
+            return;
+        }
+
+        AudioBuffer data = buffer(sound);
+        if (data == null) {
+            return;
+        }
+        Channel channel = channels[chosen];
+        if (channel.node != null) {
+            channel.node.stop();
+            root.detachChild(channel.node);
+        }
+        AudioNode node = new AudioNode(data, new AudioKey(sound.name()));
+        node.setPositional(false);
+        node.setVolume(volume / MAX_VOLUME);
+        node.setLooping(sound.loops());
+        root.attachChild(node);
+        node.play();
+
+        channel.node = node;
+        channel.sound = sound;
+        channel.priority = priority;
+        channel.code = code;
     }
 
     /**
@@ -206,17 +343,34 @@ final class JmeSoundPlayer implements SoundPlayer {
         return node;
     }
 
+    /**
+     * {@code StopSoundFX} : arrete les canaux qui jouent ce son. C'est ainsi que le
+     * lance-flammes, qui boucle, se tait.
+     */
     @Override
     public void stop(String name) {
-        AudioNode node = nodes.get(name);
-        if (node != null) {
-            node.stop();
+        Sound sound = bank.get(name);
+        if (sound == null) {
+            return;
+        }
+        for (Channel channel : channels) {
+            if (channel.node != null && channel.sound == sound) {
+                channel.node.stop();
+                root.detachChild(channel.node);
+                channel.node = null;
+                channel.sound = null;
+                channel.code = 0;
+            }
         }
     }
 
-    /** Prepare le son a sa premiere lecture, puis le garde. */
-    private AudioNode node(Sound sound) {
-        AudioNode existing = nodes.get(sound.name());
+    /**
+     * Prepare l'echantillon a sa premiere lecture, puis le garde. Chaque lecture cree son
+     * propre noeud sur ce tampon partage : c'est la seule facon, avec jMonkeyEngine,
+     * d'avoir un son qui boucle et qu'on puisse arreter.
+     */
+    private AudioBuffer buffer(Sound sound) {
+        AudioBuffer existing = buffers.get(sound.name());
         if (existing != null) {
             return existing;
         }
@@ -234,14 +388,7 @@ final class JmeSoundPlayer implements SoundPlayer {
         AudioBuffer data = new AudioBuffer();
         data.setupFormat(1, 8, sound.sampleRate());
         data.updateData(buffer);
-
-        AudioNode node = new AudioNode(data, new AudioKey(sound.name()));
-        node.setPositional(false);
-        node.setVolume(Math.min(1f, sound.volume() / MAX_VOLUME));
-        node.setLooping(sound.loops());
-        root.attachChild(node);
-
-        nodes.put(sound.name(), node);
-        return node;
+        buffers.put(sound.name(), data);
+        return data;
     }
 }

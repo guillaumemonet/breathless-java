@@ -122,6 +122,18 @@ public final class PlayerState {
         return keys.clone();
     }
 
+    /**
+     * Retire une cle : elle a ouvert sa porte. {@code SMtstkloop}.
+     *
+     * @param key {@link #PICKUP_GREEN_KEY} a {@link #PICKUP_BLUE_KEY}
+     */
+    public void dropKey(int key) {
+        int index = key - PICKUP_GREEN_KEY;
+        if (index >= 0 && index < keys.length) {
+            keys[index] = false;
+        }
+    }
+
     /** Rend au joueur les cles qu'il avait. */
     public void setKeys(boolean[] held) {
         System.arraycopy(held, 0, keys, 0, Math.min(held.length, keys.length));
@@ -196,11 +208,25 @@ public final class PlayerState {
             hurtTimer = 0;
             return;
         }
+        // movement.asm : le compteur part de zero. En posant le pied il passe a -1, ce qui
+        // l'arme a cinquante sans mordre (DMinithurt) ; la premiere morsure tombe donc au
+        // bout d'une seconde, et une traversee rapide ne coute rien.
         hurtTimer -= ticks;
-        if (hurtTimer <= 0) {
+        if (hurtTimer < 0) {
+            hurtTimer = HURT_PERIOD;
+        } else if (hurtTimer == 0) {
             hurtTimer = HURT_PERIOD;
             hit(damagePerBite);
         }
+    }
+
+    /**
+     * {@code InitScores2} : a l'entree d'un niveau, le voile rouge s'efface et le compteur
+     * du sol nocif repart de zero.
+     */
+    public void resetLevelTimers() {
+        redScreen = 0;
+        hurtTimer = 0;
     }
 
     /**

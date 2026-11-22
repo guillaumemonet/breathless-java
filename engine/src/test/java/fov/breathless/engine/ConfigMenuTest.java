@@ -36,11 +36,11 @@ class ConfigMenuTest {
         assertTrue(menu.isOpen());
         assertEquals(ConfigMenu.Page.MAIN, menu.page());
         assertEquals(0, menu.selection());
-        assertFalse(menu.isQuitting());
+        assertFalse(menu.takeQuitRequest());
 
         choose(menu, 0);                                 // RETURN TO GAME
         assertFalse(menu.isOpen());
-        assertFalse(menu.isQuitting(), "revenir au jeu n'est pas quitter");
+        assertFalse(menu.takeQuitRequest(), "revenir au jeu n'est pas quitter");
     }
 
     @Test
@@ -107,10 +107,11 @@ class ConfigMenuTest {
     @DisplayName("La page des options montre le code de la partie")
     void theOptionsPageShowsTheCode() {
         Settings settings = new Settings();
-        ConfigMenu menu = menu(settings);
+        ConfigMenu menu = new ConfigMenu(settings);
+        menu.open(false);                                // menu de la presentation
         menu.setAccessCode(LevelCode.FIRST_LEVEL);
 
-        choose(menu, 4);                                 // GAME OPTIONS
+        choose(menu, 5);                                 // GAME OPTIONS
         assertEquals(ConfigMenu.Page.OPTIONS, menu.page());
         assertTrue(menu.line(0).contains(LevelCode.FIRST_LEVEL),
                 "le code n'apparait pas : " + menu.line(0));
@@ -135,7 +136,16 @@ class ConfigMenuTest {
 
         ConfigMenu menu = menu(settings);
         choose(menu, 5);                                 // QUIT GAME
-        assertTrue(menu.isQuitting());
+        assertTrue(menu.isAskingQuit(), "quitter doit demander confirmation");
+        assertTrue(menu.isOpen());
+        menu.answerQuit(false);
+        assertFalse(menu.takeQuitRequest(), "N ne quitte pas");
+        assertFalse(menu.isOpen(), "N referme le menu, comme DSCMrtg");
+
+        menu.open();
+        choose(menu, 5);
+        menu.answerQuit(true);
+        assertTrue(menu.takeQuitRequest());
         assertFalse(menu.isOpen());
     }
 
@@ -216,16 +226,56 @@ class ConfigMenuTest {
     @Test
     @DisplayName("La page des options sait enregistrer et montrer les credits")
     void theOptionsPageRequestsSaveAndCredits() {
-        ConfigMenu menu = menu(new Settings());
-        choose(menu, 4);                                 // GAME OPTIONS
+        ConfigMenu menu = new ConfigMenu(new Settings());
+        menu.open(false);
+        choose(menu, 5);                                 // GAME OPTIONS
 
         assertFalse(menu.takeSaveRequest(), "rien n'a ete demande");
-        choose(menu, 1);                                 // SAVE CONFIG
+        choose(menu, 2);                                 // SAVE CONFIGURATION
         assertTrue(menu.takeSaveRequest(), "l'enregistrement n'est pas demande");
         assertFalse(menu.takeSaveRequest(), "la demande se repete");
 
-        choose(menu, 2);                                 // CREDITS
+        choose(menu, 3);                                 // MAIN PAGE
+        choose(menu, 6);                                 // CREDITS
         assertTrue(menu.takeCreditsRequest(), "les credits ne sont pas demandes");
         assertFalse(menu.isOpen(), "montrer les credits ferme le menu");
+    }
+
+    @Test
+    @DisplayName("La selection boucle d'un bout a l'autre de la page")
+    void selectionWraps() {
+        ConfigMenu menu = menu(new Settings());
+        menu.up();
+        assertEquals(menu.lineCount() - 1, menu.selection(), "monter depuis le haut va en bas");
+        menu.down();
+        assertEquals(0, menu.selection(), "descendre depuis le bas revient en haut");
+    }
+
+    @Test
+    @DisplayName("Le code d'acces se saisit, se verifie et se remet")
+    void theAccessCodeCanBeTyped() {
+        ConfigMenu menu = new ConfigMenu(new Settings());
+        menu.setCodeChecker(code -> LevelCode.decode(code) != null);
+        menu.open(false);
+        choose(menu, 5);                                 // GAME OPTIONS
+        choose(menu, 0);                                 // la ligne du code
+        assertTrue(menu.wantsRawKeys(), "la saisie n'a pas commence");
+        for (char c : "181CEIGGLJRJSE2T".toCharArray()) {
+            menu.typeCode(c);
+        }
+        menu.confirmCode();
+        assertFalse(menu.wantsRawKeys());
+        assertEquals("181CEIGGLJRJSE2T", menu.accessCode());
+
+        choose(menu, 0);
+        menu.typeCode('Z');
+        menu.eraseCode();
+        menu.typeCode('Q');
+        menu.cancelCode();
+        assertEquals("181CEIGGLJRJSE2T", menu.accessCode(), "Echap garde l'ancien code");
+
+        menu.setAccessCode("WWWWWWWWWWWWWWWW");
+        choose(menu, 1);                                 // RESET ACCESS CODE
+        assertEquals(ConfigMenu.START_CODE, menu.accessCode());
     }
 }

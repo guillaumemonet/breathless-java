@@ -43,12 +43,19 @@ public final class Renderer {
 
     /** Calcule une image et renvoie le tampon, reutilise d'un appel a l'autre. */
     public Framebuffer render(Camera camera) {
+        // CLookHeight = crans x LookHeightRatio, ce dernier valant windowYratio : le
+        // decalage en lignes suit la hauteur de la fenetre.
+        camera.setLookHeight((int) (((long) camera.lookStep() * viewport.yRatio()) >> 16));
         Raycaster.cast(world, camera, viewport, table);
         walls.render(camera, table, frame, surfaces);
         flats.render(camera, table, surfaces, frame);
-        objects.render(camera, table, frame, world.objects());
-        objects.renderProjectiles(camera, table, frame, world.projectiles());
+        objects.render(camera, table, frame, world.objects(), world.projectiles());
         return frame;
+    }
+
+    /** Regle les sprites sur la grosseur des pixels, voir {@link ViewSize}. */
+    public void setPixelType(int pixelType) {
+        objects.setPixelType(pixelType);
     }
 
     /** Table de rayons de la derniere image, pour inspection ou diagnostic. */

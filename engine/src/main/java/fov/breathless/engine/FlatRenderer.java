@@ -17,8 +17,8 @@ import fov.breathless.gld.texture.Texture;
  * renversee : {@code T = (hauteur - oeil) / (y - horizon)}.
  *
  * <p>Le ciel echappe a tout cela : il est trace en coordonnees ecran, sa colonne ne
- * dependant que de la colonne visee et du cap du joueur, sa ligne que de la ligne visee.
- * Il ne tourne donc pas avec le regard vertical et ne s'eloigne jamais.
+ * dependant que de la colonne visee et du cap du joueur, sa ligne que de la ligne visee
+ * decalee du regard vertical. Il ne s'eloigne jamais.
  */
 public final class FlatRenderer {
 
@@ -49,7 +49,12 @@ public final class FlatRenderer {
         int horizon = viewport.halfHeight() + camera.lookHeight();
 
         for (int y = 0; y < viewport.height(); y++) {
-            int denominator = y - horizon;
+            // Les plafonds comptent leurs lignes depuis le haut : la ligne 0 est a
+            // -horizon. Les sols les comptent depuis le bas, la derniere ligne etant a
+            // h/2 - LookHeight : une ligne de plus. MakeTextFloor ne trace donc pas la
+            // ligne de l'horizon, et toute la profondeur des sols est decalee d'autant.
+            int ceilingDenominator = y - horizon;
+            int floorDenominator = y - horizon + 1;
             int x = 0;
             while (x < viewport.width()) {
                 int value = surfaces.at(x, y);
@@ -61,9 +66,11 @@ public final class FlatRenderer {
                 while (end + 1 < viewport.width() && surfaces.at(end + 1, y) == value) {
                     end++;
                 }
-                if (Surfaces.kindOf(value) == Surfaces.SKY) {
+                int kind = Surfaces.kindOf(value);
+                int denominator = (kind == Surfaces.FLOOR) ? floorDenominator : ceilingDenominator;
+                if (kind == Surfaces.SKY) {
                     drawSky(camera, target, y, x, end, value);
-                } else if (denominator != 0) {
+                } else if (kind == Surfaces.FLOOR ? denominator > 0 : denominator < 0) {
                     drawSpan(camera, table, target, y, x, end, value, denominator);
                 }
                 x = end + 1;
@@ -131,19 +138,32 @@ public final class FlatRenderer {
      */
     private void drawSky(Camera camera, Framebuffer target, int y, int from, int to, int value) {
         Block block = world.block(Surfaces.blockOf(value));
-        Texture sky = world.texture(block.ceilTextureIndex());
+        int textureIndex = block.ceilTextureIndex();
+        Texture sky = world.texture(textureIndex);
         if (sky == null) {
             return;
         }
-        int rotation = camera.heading() / 8;   // 2048 pas de cap pour 256 pixels de ciel
-        int row = ((y * skyYRatio) >> 16) % sky.height();
-        byte[] frame = sky.frame(0);
+        // CSkyRotation = (cap >> 1) << 8, et SkyRotation = cap >> 1 : un demi-pixel de
+        // brosse par pas de cap, soit quatre tours de brosse par tour du joueur.
+        int rotation = camera.heading() >> 1;
+        // La brosse courante, tx_Brush : un ciel anime l'est aussi a l'ecran.
+        byte[] frame = sky.frame(Math.min(world.textureFrame(textureIndex), sky.frameCount() - 1));
+
+        // Le ciel suit le regard vertical : les lignes au-dessus du haut de la brosse
+        // prennent une couleur unie, le premier texel.
+        int line = y - camera.lookHeight();
+        if (line <= 0) {
+            int color = frame[0] & 0xFF;
+            for (int x = from; x <= to; x++) {
+                target.set(x, y, color);
+            }
+            return;
+        }
+        int row = ((line * skyYRatio) >> 16) % sky.height();
 
         for (int x = from; x <= to; x++) {
-            int column = (((x * skyXRatio) >> 12) + rotation) % sky.width();
-            if (column < 0) {
-                column += sky.width();
-            }
+            int column = (((x * skyXRatio) + (rotation << 12)) >> 12) & (SKY_WIDTH - 1);
+            column %= sky.width();
             target.set(x, y, frame[column * sky.height() + row] & 0xFF);
         }
     }

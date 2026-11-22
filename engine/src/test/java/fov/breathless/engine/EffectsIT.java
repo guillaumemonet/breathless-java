@@ -644,13 +644,99 @@ class EffectsIT {
                 assertFalse(simulation.takeLevelFinished(), "le niveau demarre acheve");
 
                 simulation.effects().trigger(list + 1);
-                simulation.tick(new PlayerInput());
+                // EndLevel leve Escape ; le niveau ne se quitte qu'au bout du fondu de
+                // sortie, une trentaine de pas plus tard.
+                boolean finished = false;
+                for (int tick = 0; tick < 100 && !finished; tick++) {
+                    simulation.tick(new PlayerInput());
+                    finished = simulation.takeLevelFinished();
+                }
 
-                assertTrue(simulation.takeLevelFinished(), "la fin de niveau n'est pas remontee");
+                assertTrue(finished, "la fin de niveau n'est pas remontee");
                 assertFalse(simulation.takeLevelFinished(), "la fin de niveau se repete");
                 return;
             }
         }
         throw new AssertionError("aucune fin de niveau dans les vingt niveaux");
+    }
+
+    @Test
+    @DisplayName("Un plafond qui descend ne redescend pas : StopEffect2 ne rend pas la main")
+    void oneWayEffectsRunOnce() throws IOException {
+        Fixture fixture = fixture();
+
+        for (Level level : fixture.levels()) {
+            int list = findList(level, 3);      // CeilDown
+            if (list < 0) {
+                continue;
+            }
+            EffectEntry entry = entryOf(level, list, 3);
+            List<Integer> blocks = blocksOf(level, entry.trigger());
+            if (blocks.isEmpty()) {
+                continue;
+            }
+            int block = blocks.get(0);
+            World world = world(fixture, level);
+            Effects effects = new Effects(world);
+            int start = world.ceilHeight(block);
+
+            for (int round = 0; round < 3; round++) {
+                effects.trigger(list);
+                for (int tick = 0; tick < entry.param1() + 5; tick++) {
+                    effects.update(1, -1, List.of());
+                }
+            }
+            assertEquals(start - entry.param1(), world.ceilHeight(block),
+                    "le plafond est redescendu a chaque declenchement");
+            return;
+        }
+        throw new AssertionError("aucun CeilDown dans les vingt niveaux");
+    }
+
+    @Test
+    @DisplayName("Une porte a cle ne s'ouvre qu'avec la cle, et la consomme")
+    void lockedDoorNeedsItsKey() throws IOException {
+        Fixture fixture = fixture();
+
+        for (Level level : fixture.levels()) {
+            for (int list = 1; list <= level.effectLists().size(); list++) {
+                EffectEntry locked = null;
+                for (EffectEntry entry : level.effectLists().get(list - 1)) {
+                    if (entry.effect() == 5 && entry.key() >= 1 && entry.key() <= 4
+                            && entry.param1() > 0) {
+                        locked = entry;
+                    }
+                }
+                if (locked == null || level.effectLists().get(list - 1).get(0) != locked) {
+                    continue;   // une entree sans cle avant elle partirait quand meme
+                }
+                List<Integer> blocks = blocksOf(level, locked.trigger());
+                if (blocks.isEmpty()) {
+                    continue;
+                }
+                int block = blocks.get(0);
+                int key = PlayerState.PICKUP_GREEN_KEY + locked.key() - 1;
+
+                World world = world(fixture, level);
+                Effects effects = new Effects(world);
+                PlayerState state = new PlayerState();
+                effects.setPlayerState(state);
+                int start = world.ceilHeight(block);
+
+                effects.triggerFromSwitch(list);
+                effects.update(1, -1, List.of());
+                assertEquals(start, world.ceilHeight(block), "la porte s'ouvre sans la cle");
+                assertEquals(Effects.MESSAGE_KEY_BASE + locked.key(), effects.takeMessageRequest(),
+                        "le message de cle manquante n'est pas demande");
+
+                state.collect(key, 0);
+                effects.triggerFromSwitch(list);
+                effects.update(1, -1, List.of());
+                assertTrue(world.ceilHeight(block) > start, "la porte ne s'ouvre pas avec la cle");
+                assertFalse(state.hasKey(key), "la cle n'a pas ete consommee");
+                return;
+            }
+        }
+        throw new AssertionError("aucune porte a cle dans les vingt niveaux");
     }
 }

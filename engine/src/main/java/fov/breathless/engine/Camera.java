@@ -35,7 +35,10 @@ public final class Camera {
         int cellZ = Math.floorDiv(start.z(), Level.BLOCK_SIZE);
         Block block = level.blockAt(cellX, cellZ);
         int floor = (block == null) ? 0 : block.floorHeight();
-        return new Camera(Fixed.of(start.x()), Fixed.of(start.z()), floor + EYES_HEIGHT, start.heading());
+        // InitPlayerPos : move.w #$3795,CPlayerX+2 — le joueur ne part pas pile sur une
+        // valeur entiere, ce qui evite de commencer exactement sur une ligne de la grille.
+        return new Camera(Fixed.of(start.x()) | 0x3795, Fixed.of(start.z()) | 0x3795,
+                floor + EYES_HEIGHT, start.heading());
     }
 
     public int x() {
@@ -74,6 +77,20 @@ public final class Camera {
 
     public void setLookHeight(int lookHeight) {
         this.lookHeight = lookHeight;
+    }
+
+    /**
+     * Inclinaison du regard en crans, de -72 a +72. {@code LookHeightNum} : c'est elle,
+     * et non le decalage en lignes, qui donne leur inclinaison aux tirs du joueur.
+     */
+    private int lookStep;
+
+    public int lookStep() {
+        return lookStep;
+    }
+
+    public void setLookStep(int lookStep) {
+        this.lookStep = lookStep;
     }
 
     /** Composante en x de la direction du regard, en 16.16 : {@code cos(cap)}. */

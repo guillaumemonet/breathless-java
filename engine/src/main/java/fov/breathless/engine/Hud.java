@@ -126,9 +126,25 @@ public final class Hud {
         }
     }
 
-    /** Pose un chiffre. Deborder du panneau est sans effet plutot qu'une erreur. */
+    /**
+     * Plans de bits qu'une police reecrit : {@code %11101} pour l'afficheur DIGITAL,
+     * {@code %10001} pour la MINI (Text.asm, « Bitplane usati »).
+     */
+    private static int planesOf(ScoreFont font) {
+        return (font == ScoreFont.MINI) ? 0x11 : 0x1D;
+    }
+
+    /**
+     * Pose un chiffre. Deborder du panneau est sans effet plutot qu'une erreur.
+     *
+     * <p>{@code ScorePrint} n'ecrit que dans les plans de sa police : les autres gardent le
+     * fond du panneau. Sous les compteurs, ce fond porte des plans que le glyphe ne touche
+     * pas, et c'est leur combinaison qui fait des chiffres bleus — recopier le glyphe tel
+     * quel les rendrait gris.
+     */
     private void blit(ScoreFont font, int x, int y, int digit) {
         byte[] glyph = font.glyph(digit);
+        int keep = ~planesOf(font) & 0xFF;
         for (int row = 0; row < font.height(); row++) {
             int target = y + row;
             if (target < 0 || target >= HEIGHT) {
@@ -137,7 +153,9 @@ public final class Hud {
             for (int column = 0; column < font.width(); column++) {
                 int at = x + column;
                 if (at >= 0 && at < width) {
-                    pixels[target * width + at] = glyph[row * font.width() + column];
+                    int index = target * width + at;
+                    pixels[index] = (byte) ((background[index] & keep)
+                            | (glyph[row * font.width() + column] & 0xFF));
                 }
             }
         }

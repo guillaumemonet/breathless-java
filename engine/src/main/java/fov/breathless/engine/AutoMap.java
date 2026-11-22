@@ -151,8 +151,9 @@ public final class AutoMap {
             }
             if (code != previous) {
                 previous = code;
-                Block block = level.blocks().get(code);
-                if (block.ceilHeight() == block.floorHeight()) {
+                // Les hauteurs vivantes, que les effets modifient : une porte ouverte
+                // laisse passer le releve.
+                if (world.ceilHeight(code) == world.floorHeight(code)) {
                     return;                 // porte fermee
                 }
             }
@@ -250,12 +251,14 @@ public final class AutoMap {
                     if (leftColour != 0) {
                         drawLeftLine(target, width, height, column, row, leftColour);
                     }
-                }
 
-                // Le point d'angle ferme les jonctions que les deux traits laissent ouvertes.
-                int corner = cornerColour(leftColour, upColour, previousUp);
-                if (corner != 0) {
-                    plot(target, width, height, column * CELL, row * CELL, corner);
+                    // Le point d'angle ferme les jonctions que les deux traits laissent
+                    // ouvertes. Une case non relevee saute tout son traitement, point
+                    // d'angle compris (Map.asm, MMdpout).
+                    int corner = cornerColour(leftColour, upColour, previousUp);
+                    if (corner != 0) {
+                        plot(target, width, height, column * CELL, row * CELL, corner);
+                    }
                 }
             }
         }
@@ -290,11 +293,11 @@ public final class AutoMap {
         Block here = level.blocks().get(code);
         Block there = level.blocks().get(neighbourCode);
 
-        int rise = Math.abs(there.floorHeight() - here.floorHeight());
+        int rise = Math.abs(world.floorHeight(neighbourCode) - world.floorHeight(code));
         if (rise != 0) {
             return (rise <= Player.MAX_RISE) ? COLOUR_OPEN : COLOUR_BLOCKED;
         }
-        if (there.ceilHeight() != here.ceilHeight()) {
+        if (world.ceilHeight(neighbourCode) != world.ceilHeight(code)) {
             return COLOUR_STEP;
         }
         if (there.floorTexture() != here.floorTexture()) {

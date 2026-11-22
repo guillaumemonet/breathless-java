@@ -64,8 +64,10 @@ public final class Main {
                 + data.textures().size() + " textures, "
                 + data.objects().size() + " types d'objet");
         System.out.println("Deplacement : fleches ou ZQSD/WASD | Maj : courir | "
-                + "Alt : pas de cote");
-        System.out.println("Espace : ouvrir une porte, actionner | Ctrl : tirer");
+                + "Alt : pas de cote force | , et . : pas de cote");
+        System.out.println("Debut / Fin : regarder en haut / en bas | Inser : regard droit");
+        System.out.println("Espace : ouvrir une porte, actionner | Ctrl : tirer | P : pause");
+        System.out.println("Au titre : une touche ouvre le menu, START GAME lance la partie");
         System.out.println("Tab : carte | 1-6 : choisir une arme | X : arme suivante");
         System.out.println("Au terminal : avancer/reculer pour choisir, Espace pour valider");
         System.out.println("+ / - : taille de la fenetre | Pave 7 8 9 0 : grosseur des pixels");

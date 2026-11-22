@@ -174,19 +174,22 @@ class TerminalIT {
     }
 
     @Test
-    @DisplayName("Le choix ne sort jamais de la liste")
+    @DisplayName("Le choix boucle d'un bout a l'autre de la liste, sans jamais en sortir")
     void theSelectionStaysInRange() throws IOException {
         Shop shop = shop(0);
+        int lines = shop.terminal().lineCount();
 
-        for (int step = 0; step < 20; step++) {
-            shop.terminal().up();
-        }
+        // Tkeyup : au-dessus de la premiere ligne, on passe a la derniere.
+        shop.terminal().up();
+        assertEquals(lines - 1, shop.terminal().selection());
+        shop.terminal().down();
         assertEquals(0, shop.terminal().selection());
 
         for (int step = 0; step < 20; step++) {
             shop.terminal().down();
+            int selection = shop.terminal().selection();
+            assertTrue(selection >= 0 && selection < lines, "choix hors de la liste");
         }
-        assertEquals(shop.terminal().lineCount() - 1, shop.terminal().selection());
     }
 
     @Test

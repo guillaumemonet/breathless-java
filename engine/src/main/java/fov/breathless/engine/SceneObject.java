@@ -35,6 +35,47 @@ public final class SceneObject {
     private int cont2 = 1;
     private int attackDelay = 1;
 
+    /** {@code obj_rotdir} : sens de contournement d'un obstacle, -1, 0 ou +1. */
+    private int rotDir;
+
+    /** {@code obj_playercoll} : decompte entre deux coups portes au contact. */
+    private int playerColl;
+
+    /**
+     * {@code obj_bmstatus} : bit 7, l'ennemi a ete dessine a la derniere image ; bits 5 et
+     * 6, le dernier pas a bute sur un coin selon x ou selon z.
+     */
+    private int bmStatus;
+
+    public int rotDir() {
+        return rotDir;
+    }
+
+    public void setRotDir(int rotDir) {
+        this.rotDir = rotDir;
+    }
+
+    public int playerColl() {
+        return playerColl;
+    }
+
+    public void setPlayerColl(int playerColl) {
+        this.playerColl = playerColl;
+    }
+
+    public int bmStatus() {
+        return bmStatus;
+    }
+
+    public void setBmStatus(int bmStatus) {
+        this.bmStatus = bmStatus & 0xFF;
+    }
+
+    /** Le rendu signale l'ennemi comme vu : il bougera meme au-dela de vingt blocs. */
+    public void markInView() {
+        bmStatus |= 0x80;
+    }
+
     public SceneObject(ObjectDefinition definition, int x, int z, int y, int heading, int dormantTrigger) {
         this.definition = definition;
         this.x = x;

@@ -32,6 +32,23 @@ public final class Simulation {
         }
         enemies.setSoundPlayer(this.sound);
     }
+    /** Le fondu de l'image : entree, teleportation, sortie. */
+    private final Fade fade = new Fade();
+
+    /** Le fondu en cours, que la couche graphique applique a l'image. */
+    public Fade fade() {
+        return fade;
+    }
+
+    /** Le premier pas du niveau, qui fait entendre le fondu d'entree. */
+    private boolean firstTick = true;
+
+    /** {@code EndLevelFade} : la sortie est lancee, on attend le noir. */
+    private boolean leaving;
+
+    /** {@code rndseed} : un seul generateur pour tout le niveau. */
+    private final Rnd rnd = new Rnd();
+
     /** Etat propre a cette simulation, quand aucune partie en cours n'est fournie. */
     private final PlayerState ownState = new PlayerState();
 
@@ -66,13 +83,19 @@ public final class Simulation {
         this.career = career;
         this.player = new Player(world);
         this.effects = new Effects(world);
+        this.effects.setPlayerState(state());
+        this.effects.setRnd(rnd);
+        this.effects.setFade(fade);
+        // Fondu d'entree, et le son du teleport qui l'accompagne (TMapStart).
+        this.fade.levelStart();
         Weapons arsenal = (career != null) ? career.weapons()
                 : (bank == null) ? null : new Weapons(bank);
         this.combat = (bank == null) ? null : new Combat(world, arsenal, state(), bank);
-        this.enemies = new EnemyAi(world);
+        this.enemies = new EnemyAi(world, rnd);
         this.autoMap = new AutoMap(world);
         this.terminal = (combat == null) ? null : new Terminal(state(), combat.weapons());
         this.currentBlock = blockUnderCamera();
+        this.player.place(camera);
     }
 
     public Simulation(World world, Camera camera) {
@@ -111,8 +134,8 @@ public final class Simulation {
                 Fixed.of(cellX * Level.BLOCK_SIZE + Level.BLOCK_SIZE / 2),
                 Fixed.of(cellZ * Level.BLOCK_SIZE + Level.BLOCK_SIZE / 2));
         player.stop();
+        player.place(camera);
         currentBlock = blockUnderCamera();
-        camera.setY(world.floorHeight(currentBlock) + Camera.EYES_HEIGHT);
     }
 
     /**
@@ -165,21 +188,92 @@ public final class Simulation {
         return world;
     }
 
+    /** Message demande pendant le pas, indice de {@link Messages}, ou -1. */
+    private int messageRequest = -1;
+
+    /**
+     * Le message a afficher, ou -1 : un ramassage, une cle qui manque. L'appel efface la
+     * demande.
+     */
+    public int takeMessageRequest() {
+        int request = messageRequest;
+        messageRequest = -1;
+        if (request < 0) {
+            request = effects.takeMessageRequest();
+        }
+        return request;
+    }
+
+    /** {@code PlayerHit} : le coup, et le cri qui l'accompagne. */
+    private void hurt(int damage) {
+        int before = state().health() + state().shields();
+        state().hit(damage);
+        if (state().health() + state().shields() < before) {
+            sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_SCREAM);
+        }
+    }
+
+    private boolean deathOver;
+
+    /**
+     * La sequence de mort est-elle finie ? Les yeux sont a terre, l'attente ecoulee, et
+     * le fondu de sortie a atteint le noir.
+     */
+    public boolean isDeathFinished() {
+        return deathOver;
+    }
+
+    /** Commandes vides, pour les pas ou le jeu est gele. */
+    private static final PlayerInput FROZEN = new PlayerInput();
+
+    /**
+     * {@code st PlayerMoved} dans {@code InitPlayerPos} : la liste du bloc de depart part
+     * des le premier pas.
+     */
+    private boolean moved = true;
+
     /** Avance le monde d'un cinquantieme de seconde. */
     public void tick(PlayerInput input) {
-        player.update(camera, input);
+        // Teleport met ProgramState a -1 : le temps du fondu, les commandes sont ignorees
+        // et les objets ne bougent plus.
+        boolean frozen = fade.freezesGame();
 
-        int block = blockUnderCamera();
-        if (block != currentBlock) {
-            // On ne declenche qu'au franchissement : rester sur la dalle ne relance rien.
-            currentBlock = block;
-            effects.enterBlock(block);
-        }
-
+        // SwitchManagement passe avant le deplacement, sur la case et le cap du pas
+        // precedent.
         if (input.action) {
             input.action = false;
-            effects.useSwitch(camera);
+            if (!frozen) {
+                effects.useSwitch(camera);
+            }
         }
+
+        sound.setListener(camera.x() >> 16, camera.z() >> 16);
+        if (firstTick) {
+            // TMapStart : le fondu d'entree part sur le son du teleport.
+            firstTick = false;
+            sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_TELEPORT);
+        }
+        if (state().isDead()) {
+            player.die();
+        }
+        player.update(camera, frozen ? FROZEN : input);
+        moved |= player.changedBlock();
+
+        int fallDamage = player.takeFallDamage();
+        if (fallDamage > 0) {
+            hurt(fallDamage);
+        }
+        if (player.takeStepSound()) {
+            sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_STEP);
+        }
+
+        currentBlock = blockUnderCamera();
+        // PlayerMoved n'est leve qu'au changement de bloc — et par InitPlayerPos, d'ou le
+        // declenchement du bloc de depart au premier pas. Rien ne part pendant une chute.
+        if (moved && !player.isFalling()) {
+            effects.enterBlock(currentBlock);
+        }
+        moved = false;
 
         effects.update(1, currentBlock, world.objects());
         int request = effects.takeTerminalRequest();
@@ -190,21 +284,38 @@ public final class Simulation {
         if (destination != null) {
             teleport(destination[0], destination[1]);
         }
-        levelFinished |= effects.takeLevelFinished();
+        // EndLevel leve Escape ; la boucle principale lance alors le fondu de sortie, et
+        // le niveau ne se quitte qu'une fois le noir atteint. La fin de la sequence de
+        // mort leve Escape de la meme facon.
+        if ((effects.takeLevelFinished() || player.isDeathFinished()) && !leaving) {
+            leaving = true;
+            fade.levelEnd();
+            sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_TELEPORT);
+        }
+        if (leaving && fade.reachedFull()) {
+            levelFinished = !player.isDeathFinished();
+            deathOver = player.isDeathFinished();
+        }
+        fade.advance(1);
         world.animate(1);
         followFloors();
         collectPickups();
 
         int before = state().health() + state().shields();
-        state().standOn(world.level().blocks().get(currentBlock).floorDamage(), 1);
+        // DMnohurt : un joueur qui tombe ne touche pas encore le sol, et le compteur repart.
+        int damage = player.isFalling() ? 0 : world.level().blocks().get(currentBlock).floorDamage();
+        state().standOn(damage, 1);
         if (state().health() + state().shields() < before) {
             sound.playGlobal(fov.breathless.gld.sound.Sound.GLOBAL_SCREAM);
         }
 
-        if (combat != null) {
-            combat.update(camera, input, currentBlock);
+        if (!frozen) {
+            if (combat != null) {
+                combat.setPlayerSpeed(player.speed());
+                combat.update(camera, input, currentBlock);
+            }
+            enemies.update(camera, state(), combat);
         }
-        enemies.update(camera, state(), combat);
         autoMap.survey(camera);
         state().advance(1);
     }
@@ -218,6 +329,12 @@ public final class Simulation {
      */
     private void followFloors() {
         for (SceneObject object : world.objects()) {
+            // DrawObjects ne recale que les types autres que 4 et 5 : une explosion reste
+            // centree sur ce qui a explose.
+            int type = object.definition().objectType();
+            if (type == ObjectDefinition.TYPE_SHOT || type == ObjectDefinition.TYPE_EXPLOSION) {
+                continue;
+            }
             int cellX = Math.floorDiv(object.x(), Level.BLOCK_SIZE);
             int cellZ = Math.floorDiv(object.z(), Level.BLOCK_SIZE);
             object.setY(world.floorHeight(Math.abs(world.cell(cellX, cellZ))));
@@ -235,7 +352,9 @@ public final class Simulation {
         int playerZ = camera.z() >> 16;
 
         for (SceneObject object : world.objects()) {
-            if (object.isCollected() || object.isDormant()
+            // CtrlCollObj ne lit pas obj_inactive : un ramassable porteur d'un trigger se
+            // prend des le depart, seul ActiveEnemy l'aurait attendu.
+            if (object.isCollected()
                     || object.definition().objectType() != ObjectDefinition.TYPE_PICKUP) {
                 continue;
             }
@@ -250,6 +369,12 @@ public final class Simulation {
             }
             if (state().collect(object.pickupSubtype(), object.pickupValue())) {
                 object.collect();
+                // Le message du ramassage, puis le premier son de l'objet.
+                messageRequest = Messages.forPickup(object.pickupSubtype());
+                java.util.List<String> names = object.definition().sounds();
+                if (!names.isEmpty() && names.get(0) != null && !names.get(0).isBlank()) {
+                    sound.play(names.get(0));
+                }
             }
         }
     }

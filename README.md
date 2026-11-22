@@ -21,8 +21,8 @@ palette 256 couleurs. jMonkeyEngine n'affiche ce tampon que comme une texture pl
 Ce choix privilégie la fidélité au pixel plutôt que l'exploitation du GPU. Les
 conséquences sont assumées :
 
-- pas de vraie 3D, donc pas de rotation verticale libre — mais le décalage vertical du
-  regard (`LookHeight`) existe déjà dans l'original et sera repris ;
+- pas de vraie 3D, donc pas de rotation verticale libre — seulement le décalage vertical
+  du regard (`LookHeight`) de l'original, que le portage reprend ;
 - la géométrie reste contrainte à la grille de blocs ;
 - l'essentiel du travail est du portage 1:1 de code assembleur documenté.
 
@@ -72,7 +72,18 @@ retirer de lui-même.
 Les hauteurs de sol et de plafond vivent donc dans un **état mutable** du monde, séparé
 des blocs issus du fichier, qui restent la description d'origine intacte.
 
-Une porte refuse de se refermer tant que le joueur se tient dessous.
+Une porte refuse de se refermer sur le joueur ou sur un ennemi : elle repart vers le haut,
+refait sa pause, et retente. Les restes d'un ennemi tombé dessous disparaissent quand elle
+se referme.
+
+Deux façons de finir, et la différence se voit : un effet qui va et vient — une porte, un
+ascenseur — rend la main à son trigger, et repart au prochain passage ; un effet
+**définitif** — un plafond qui descend, une porte qui reste ouverte, une lumière qui
+change — la garde pour toujours. Sans cela, un plafond redescendrait à chaque passage
+jusqu'à passer sous le sol.
+
+Un interrupteur exige la **clé** que porte l'entrée : sans elle, rien ne s'ouvre et le jeu
+le dit ; avec elle, la clé sert, et disparaît.
 
 Les trois sortes de portes ne se ressemblent pas, et c'est le plan qu'elles déplacent qui
 les distingue : **`DoorUp`** lève le plafond, **`Door2`** — la porte « a due ante », à deux
@@ -88,8 +99,9 @@ Deux cadences, toutes deux plus lentes que l'affichage :
 - **objets à animation simple** : une image toutes les 4 (12,5 par seconde).
 
 L'animation d'un objet appartient à son **type**, pas à ses instances : tous les bidons
-d'acide d'un niveau bouillonnent à l'unisson. Les ennemis font exception — leur pose suit
-leur comportement, pas l'horloge, et attend donc l'IA du jalon 3.
+d'acide d'un niveau bouillonnent à l'unisson. Les ennemis ont leurs huit poses de marche,
+calées sur l'horloge comme le fait `WALKANIM`, et leurs poses de tir et de chute ; tirs et
+explosions avancent à 12,5 images par seconde.
 
 Usage réel dans les vingt niveaux, qui a guidé les priorités :
 
@@ -100,8 +112,8 @@ Usage réel dans les vingt niveaux, qui a guidé les priorités :
 | Ascenseurs | 66 | porté |
 | Sols et plafonds mobiles | 14 | porté |
 | Lumières clignotantes | 39 | porté |
-| Terminal, téléportation, fin de niveau | 112 | logique de jeu, jalon 3 |
-| Lumières liées | 37 | à faire |
+| Terminal, téléportation, fin de niveau | 112 | porté |
+| Lumières liées | 37 | porté |
 
 Les effets 1, 9, 10 et 18 du catalogue ne sont utilisés par aucun niveau.
 
@@ -191,18 +203,30 @@ gradle :game:run --args="<chemin vers les .GLD>"
 | Touche | Action |
 |---|---|
 | Flèches, ZQSD ou WASD | avancer, reculer, tourner |
+| `,` et `.` | pas de côté, qui se combine avec la rotation |
+| Alt | pas de côté forcé (les touches gauche/droite se déplacent au lieu de tourner) |
+| Début / Fin | regarder vers le haut / vers le bas ; Inser remet le regard droit |
 | Espace, E ou Entrée | **actionner** : ouvrir une porte face à soi, appeler un ascenseur |
 | Ctrl | tirer |
+| Maj | courir |
 | Tab | **carte** — elle remplace la vue et suspend le jeu, comme dans l'original |
 | 1 à 6 | choisir une arme |
 | X | arme suivante |
-| Maj | courir |
-| Alt | pas de côté (les touches gauche/droite se déplacent au lieu de tourner) |
 | + / − | agrandir ou réduire la fenêtre de jeu |
 | Pavé 7 8 9 0 | grosseur des pixels : 1×1, 2×1, 1×2, 2×2 |
 | Page préc. / suiv. | changer de niveau |
 | P | pause |
 | Échap | menu de configuration — il porte la commande de sortie |
+
+Les commandes de la première moitié du tableau se redéfinissent dans la page clavier du
+menu, comme les treize de l'original ; la carte, la pause, les armes et les réglages
+d'affichage gardent leurs touches.
+
+Au démarrage, le jeu affiche la carte graphique qu'il utilise (`GL_RENDERER`). Sur un
+portable à deux cartes, Windows donne la carte intégrée à `java.exe` : le jeu le signale
+alors à l'écran et demande s'il doit continuer. Le correctif : Paramètres Windows →
+Système → Affichage → Graphiques → ajouter `java.exe` et `javaw.exe` → « Hautes
+performances ». `-Dbreathless.gpu=ok` laisse l'avertissement mais ne pose plus la question.
 
 La simulation tourne à **pas fixe, 50 Hz** — la fréquence PAL pour laquelle les constantes
 de déplacement d'origine ont été réglées. L'affichage, lui, suit la fréquence de l'écran.
@@ -227,8 +251,15 @@ porte sa propre palette, qui remplace celle du jeu le temps de l'afficher, et sa
 position : le titre couvre l'écran, la bannière de fin ne fait que 288×40 et se pose au
 milieu.
 
-Le jeu montre le titre au lancement, présente chaque monde la première fois qu'on y entre,
-et affiche la bannière quand le joueur meurt — Espace passe à la suite.
+La séquence est celle de l'original. Les deux logos puis le titre, sur la musique des
+titres ; une touche ouvre le menu de la présentation, d'où **START GAME** lance la partie
+au niveau que dit le code d'accès. Chaque niveau s'ouvre sur son **écran de chargement** :
+l'image du monde, le nom du monde et de l'arène lus dans le fichier maître
+`BREATHLESS.GLD`, les tentatives restantes et le code d'accès, sur la musique `MUSL` ;
+une touche lance le niveau. La mort fait s'effondrer le joueur, puis reprend le niveau
+s'il reste des tentatives ; sinon la bannière de fin de partie, puis le titre — le code
+d'accès reste celui du dernier niveau atteint. Les crédits, l'écran final et la bannière
+passent seuls au bout de leur temps, une touche les abrège.
 
 ### La fenêtre de jeu
 
@@ -256,7 +287,8 @@ vérifie, et c'est lui qui a révélé le seul écart qui restait — l'original
 en deux mots longs puis *un mot*, si bien que les deux derniers octets voient le mot bas
 de la clé et non son mot haut.
 
-Le jeu affiche le code à la fin de chaque niveau, et l'accepte au lancement :
+L'écran de chargement de chaque niveau montre son code, qui devient le code d'accès. Il se
+saisit dans les options de jeu, avant la partie, et s'accepte aussi au lancement :
 
 ```bash
 gradle run --args="../Breathless 181CEIGGLJRJSE2T"
@@ -288,8 +320,12 @@ Amiga, volume, boucle, priorité, canaux, type. Trois sortes d'enregistrements, 
 Quarante des quarante-sept entrées sont des bruitages, sept sont des morceaux. La fréquence
 se déduit de la période : `3 546 895 / période`, l'horloge PAL.
 
-Les bruitages sont joués : porte, interrupteur, téléport, tir, arme vide, impact, mort,
-réveil d'ennemi, cri du joueur.
+Les bruitages sont joués : porte qui roule puis qui bute, interrupteur, téléport, pas,
+ramassage, tir, arme vide, impact, mort, explosion, réveil d'ennemi, cri du joueur. Comme
+sur l'Amiga, ils se partagent **quatre canaux** : chacun a sa priorité, que la distance
+abaisse, et son volume baisse avec elle jusqu'à se taire au-delà de vingt-deux blocs. Un
+son « seul » ne se relance pas tant qu'il joue, et une porte garde son canal, si bien que
+le choc de fin de course coupe le roulement.
 
 #### La musique
 
@@ -315,10 +351,11 @@ boucle.
 
 ### Le téléport et la fin de niveau
 
-Le téléport marque un temps — trente-deux cinquantièmes, le fondu de l'original — puis
-dépose le joueur au centre de la case visée, élan coupé. La fin de niveau ne fait qu'une
-chose dans l'original : lever le drapeau de sortie ; ici elle enchaîne sur le niveau
-suivant.
+Le téléport fond l'image vers le brouillard puis la ramène, et gèle le jeu le temps de
+l'aller-retour ; à trente-deux cinquantièmes, au plus fort du fondu, le joueur est déposé
+au centre de la case visée, élan coupé. La fin de niveau lève le drapeau de sortie ; la
+boucle principale fond alors l'image au noir avant d'enchaîner, et chaque niveau s'ouvre
+par le fondu inverse.
 
 La **lumière liée** suit la course d'un autre effet : une porte qui monte éclaire la pièce
 à mesure qu'elle s'ouvre, proportionnellement à son avancement.
@@ -327,23 +364,26 @@ La **lumière liée** suit la course d'un autre effet : une porte qui monte écl
 
 ![Menu de configuration](docs/images/menu.png)
 
-Échap ouvre le menu, sur le même moniteur que le terminal — même police, même mécanisme de
-pages. Quatre pages : l'accueil, la fenêtre (taille, grosseur des pixels, viseur), le son
-(volume de la musique, musique et bruitages), et les options, qui montrent le code de la
-partie en cours. Les flèches déplacent le choix, gauche et droite font défiler une valeur,
-Espace valide.
+Échap ouvre le menu, sur le même moniteur que le terminal — même police, mêmes pages,
+mêmes positions que `conf_page0` à `conf_page5`. En jeu : retour au jeu, fenêtre, son,
+clavier, contrôles et **QUIT GAME**, qui demande « REALLY QUIT ? (Y/N) » et ramène à la
+présentation. Avant la partie : **START GAME**, les mêmes pages, les options de jeu et les
+crédits. Les flèches déplacent le choix — d'un bout à l'autre de la page —, gauche et
+droite font défiler une valeur, Espace valide.
 
-La page **clavier** redéfinit les dix commandes : choisir une ligne met le menu en attente,
-la touche suivante est affectée, et la commande qui l'employait la perd. Échap abandonne.
+La page **clavier** redéfinit les treize commandes de l'original : choisir une ligne met le
+menu en attente, la touche suivante est affectée, et la commande qui l'employait la perd.
+Les touches réservées — Tab, Échap, P, 1 à 6, F1 à F6 et les touches fixes du portage —
+sont refusées, comme `keylist` les refusait. Échap abandonne.
+
+La page **contrôles** règle l'inertie de la marche et de la rotation, et les vitesses, à
+pied et en course, comme `AdjustConfigVars` les traduisait.
 
 ![Redéfinition des touches](docs/images/clavier.png)
 
-La page **options** montre le code de la partie, enregistre les réglages dans
-`breathless.config` — repris au lancement suivant — et donne accès à l'écran des crédits.
-
-Une page de l'original n'est pas portée, celle des contrôles : elle règle la souris, que ce
-portage n'emploie pas. Le filtre audio non plus : c'est un passe-bas du matériel Amiga, sans
-équivalent ici.
+La page **options de jeu**, avant la partie, laisse **saisir** le code d'accès — vérifié,
+« BAD ACCESS CODE ! » sinon —, le remettre au code de départ, et enregistrer les réglages
+dans `breathless.config`, repris au lancement suivant.
 
 ### Le terminal
 
@@ -380,7 +420,14 @@ Cinq des douze ennemis — WALK, EYE1, SKUL, TERM et SPID — n'ont **pas** d'an
 chute et **explosent** sur place. C'est leur dernière image de tir, égale à ce qui serait
 la première de leur chute, qui le dit. Ce qu'ils laissent dépend ensuite de leur
 explosion : le cadavre de l'ennemi pour les uns, la dernière image de l'explosion pour les
-autres. Dans tous les cas il reste quelque chose au sol.
+autres. Dans tous les cas il reste quelque chose au sol. Un tir qui explose lui-même — les
+boules de feu, le plasma — fait exploser n'importe quel ennemi, chute ou non.
+
+Les ennemis ne décident pas à chaque pas : `obj_cont1` espace leurs décisions, de trois
+passages quand ils visent à quarante-sept après un obstacle, ce qui leur donne leurs
+lignes droites. Ils contournent un obstacle dans un sens qu'ils gardent jusqu'à passer, ne
+se traversent pas, frappent le joueur au contact, et ne bougent que s'ils sont à moins de
+vingt blocs ou ont été vus à la dernière image.
 
 Ces trois comparaisons portent sur l'**identité** des images, pas sur leur contenu : le
 moteur d'origine compare des pointeurs, et la banque d'objets partage donc une seule
@@ -446,10 +493,28 @@ d'être signalés parce qu'ils surprennent :
 - **Entre deux cibles à portée, c'est la plus proche qui encaisse.** L'original prend la
   première de sa liste de case, c'est-à-dire un ordre de placement — deux ennemis côte à
   côte se volaient alors les coups.
+
+Et quelques écarts de forme, faute d'équivalent :
+
 - **Le moniteur du terminal et des menus a un fond opaque**, là où l'original emploie des
-  sprites transparents, et ses teintes exactes ne se déduisent pas de la source.
-- **Le réglage des touches et des contrôles** n'est pas porté : les touches sont fixes.
-  Le filtre audio non plus, c'est un passe-bas du matériel Amiga.
+  sprites transparents ; ses teintes exactes ne se déduisent pas de la source. Les
+  messages en jeu, eux, s'impriment en transparence.
+- **La souris n'est pas employée** : la page des contrôles ne propose que le clavier. Le
+  **filtre audio**, un passe-bas du matériel Amiga, cède sa ligne à l'interrupteur des
+  bruitages.
+- **Les touches par défaut** suivent les habitudes d'aujourd'hui ; celles de l'original —
+  Alt gauche pour tirer, Ctrl pour courir, Maj pour le pas de côté — se rétablissent dans
+  la page clavier.
+- **Les textures animées** avancent à 6,25 images par seconde, la cadence voulue. Celle de
+  l'original dépendait de la vitesse d'affichage de la machine.
+- **L'écran de chargement** écrit avec une police à chasse fixe de huit pixels : celle de
+  l'original, la police système de l'Amiga, ne fait pas partie des données.
+- **Un son qui boucle** — seul le lance-flammes le fait — reprend tout son échantillon, là
+  où l'original ne reprend que la partie qui suit le point de boucle.
+- **Les pixels** sont en 1×1 au premier lancement, et non en 2×2.
+
+L'audit qui a comparé le portage aux sources, point par point, est dans
+[`docs/audit-sources.md`](docs/audit-sources.md).
 
 ## Feuille de route
 
@@ -489,6 +554,10 @@ d'être signalés parce qu'ils surprennent :
 - [x] **Menu de configuration** — fenêtre, son, viseur, code de la partie
 - [x] **Jalon 4 : finitions** — audio, musique, codes de niveau, viseur, réglages
       d'affichage, écrans fixes et menu
+- [x] **Audit contre les sources** — effets définitifs et clés, IA cadencée par
+      `obj_cont1`, collisions joueur/objets et ennemi/objets, chute, regard vertical,
+      balancement, rendu des sprites selon le pixel, ciel, fondus, écran de chargement,
+      menus d'origine, messages, son à quatre canaux
 - [x] **Tenue du jeu** — trois tentatives, pause, cadence de tir au coup par coup, chute
       des ennemis, barème de points, séquence complète des écrans, redéfinition des
       touches et sauvegarde des réglages

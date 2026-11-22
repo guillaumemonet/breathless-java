@@ -16,8 +16,8 @@ import java.util.List;
  * +0x24  sept noms de quatre caracteres : musique des titres, logos, titre, credits,
  *        fin de partie, ecran final
  * +0x40  prefixe des fichiers, puis les numeros des quatre banques
- * +0x54  WORD   taille de la liste qui suit
- * +0x56  WORD   nombre de mondes
+ * +0x54  LONG   taille de la liste qui suit
+ * +0x58  WORD   nombre de mondes
  *        par monde : WORD nombre de niveaux, nom sur 20 caracteres,
  *                    puis par niveau : numero de fichier sur 4, nom sur 20
  * </pre>
@@ -45,7 +45,7 @@ public final class MasterFile {
             throw new GldFormatException("Fichier maitre attendu : " + container.source());
         }
         String music = text(data, 0x24, 4);
-        int position = 0x56;
+        int position = 0x58;
         int count = u16(data, position);
         position += 2;
         List<World> worlds = new ArrayList<>();

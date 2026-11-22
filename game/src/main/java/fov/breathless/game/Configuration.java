@@ -82,7 +82,7 @@ final class Configuration {
         }
 
         try (var out = Files.newOutputStream(file)) {
-            properties.store(out, "Reglages de Breathless-JME");
+            properties.store(out, "Reglages de Breathless Java");
             System.out.println("Reglages enregistres dans " + file.toAbsolutePath());
         } catch (IOException failure) {
             System.out.println("Reglages non enregistres : " + failure.getMessage());

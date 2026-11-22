@@ -1,13 +1,20 @@
-# Breathless-JME
+# Breathless Java
 
-Portage en Java / jMonkeyEngine de **Breathless** (Fields of Vision, 1995-96), FPS
-texture-mappé pour Amiga AGA.
+Portage en Java de **Breathless** (Fields of Vision, 1995-96), FPS texture-mappé pour
+Amiga AGA. jMonkeyEngine fournit la fenêtre, le clavier et le son.
 
 ![Le jeu](docs/images/jeu.png)
 
 Le moteur est réécrit depuis l'assembleur 68k d'origine : raycaster, sprites, effets,
-combat, IA, panneau de bord, carte, terminal, son et musique. Rien n'est émulé — tout est
-porté, et vérifié contre les données du jeu.
+combat, IA, panneau de bord, carte, terminal, son et musique — et vérifié contre les
+données du jeu.
+
+**Ce n'est pas un émulateur**, ni de l'Amiga, ni même en partie du 68000 : aucune
+instruction 68k n'est exécutée, et le binaire d'origine n'est pas chargé. Chaque routine
+de l'assembleur a été lue et récrite en Java ; le jeu ne reprend de l'original que ses
+**données** — niveaux, textures, sprites, sons, musiques —, lues dans les fichiers `.GLD`
+tels qu'ils sont livrés. Rien n'émule non plus la puce graphique ni la puce sonore : le
+rendu est un raycaster logiciel, la musique un lecteur ProTracker écrit pour l'occasion.
 
 ![Extérieur](docs/images/exterieur.png)
 

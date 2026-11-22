@@ -1,4 +1,4 @@
-rootProject.name = "breathless-jme"
+rootProject.name = "breathless-java"
 
 include("gld-core")
 include("engine")

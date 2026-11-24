@@ -608,16 +608,83 @@ L'audit qui a comparé le portage aux sources, point par point, est dans
       des ennemis, barème de points, séquence complète des écrans, redéfinition des
       touches et sauvegarde des réglages
 
-## Origine et droits
+## Mentions légales et données du jeu
 
-Les sources de **Breathless** (Fields of Vision, 1995-96) ont été publiées en freeware par
-le magazine *Amiresource*. Le `Leggimi.txt` d'origine demande qu'un produit qui en dérive
-soit lui-même rigoureusement freeware, sans profit direct ni indirect.
+### Implémentation indépendante du moteur
 
-**Ce dépôt est freeware.** Il ne contient pas les données du jeu, et les paquets publiés
-non plus : rien n'est redistribué. Le jeu va chercher l'archive des sources là où ses
-auteurs l'ont publiée, et seulement si on le lui accorde.
+Ce projet est une réimplémentation indépendante du moteur de *Breathless*, conçue pour reproduire le comportement du jeu d'origine sur les plateformes modernes.
 
-Le lecteur de modules P61A livré dans les sources est de Jarno Paananen. Ce portage ne
-l'emploie pas : son décodeur réimplémente le *format* d'après la description publique de
-[p61aconv](https://github.com/howprice/p61aconv), sous licence MIT.
+Le moteur a été développé à partir du code source d'origine, publié en freeware par le magazine *Amiresource* ([mheyer32/Breathless](https://github.com/mheyer32/Breathless)), par analyse technique et tests de compatibilité. Ce code source n'est pas inclus dans ce dépôt.
+
+Le `Leggimi.txt` d'origine demande qu'un produit qui en dérive soit lui-même rigoureusement freeware, sans profit direct ni indirect. **Ce dépôt est freeware.**
+
+### Fichiers du jeu d'origine
+
+Ce projet nécessite des fichiers du jeu d'origine, comme l'archive des sources d'origine, qui contient les données du jeu, pour fonctionner.
+
+**Les fichiers du jeu d'origine ne sont pas inclus dans ce projet.**
+
+Chaque utilisateur doit se procurer et fournir ses propres fichiers de jeu auprès d'une source légalement autorisée. Avant de télécharger ou d'utiliser ce moteur, l'utilisateur doit confirmer qu'il possède une copie du jeu d'origine obtenue légalement.
+
+Ni ce dépôt ni les paquets publiés ne contiennent les données du jeu. Au premier lancement, le jeu propose d'aller chercher l'archive là où ses auteurs l'ont publiée, et seulement si on le lui accorde ; une copie locale l'emporte toujours.
+
+Eloane Studio n'héberge, ne distribue ni ne fournit de copies non autorisées de données de jeu protégées par le droit d'auteur.
+
+### Droits d'auteur et marques
+
+Les noms, marques, graphismes, musiques et autres éléments propriétaires de *Breathless* restent la propriété de leurs titulaires respectifs (Fields of Vision).
+
+Ce projet est une implémentation indépendante et non officielle ; il n'est ni affilié, ni approuvé, ni soutenu par les développeurs ou les éditeurs du jeu d'origine.
+
+### Préservation
+
+Ce projet a pour but de préserver le comportement technique et l'expérience de jeu des jeux vidéo classiques, tout en les rendant accessibles sur les systèmes modernes.
+
+Le moteur est fourni à des fins de compatibilité, de préservation et d'éducation.
+
+### Crédits
+
+Jeu d'origine : Fields of Vision (1995-96). Le lecteur de modules P61A livré dans les sources est de Jarno Paananen ; ce portage ne l'emploie pas : son décodeur réimplémente le *format* d'après la description publique de [p61aconv](https://github.com/howprice/p61aconv), sous licence MIT. Portage Java : **Guillaume Monet**.
+
+<details>
+<summary>English version</summary>
+
+### Legal Notice & Game Assets
+
+#### Independent Engine Implementation
+
+This project is an independent reimplementation of the *Breathless* engine, designed to reproduce the original game's behavior on modern platforms.
+
+The engine has been developed from the original source code, released as freeware by *Amiresource* magazine ([mheyer32/Breathless](https://github.com/mheyer32/Breathless)), through technical analysis and compatibility testing. That source code is not included in this repository.
+
+The original `Leggimi.txt` asks that any derived product be strictly freeware itself, with no direct or indirect profit. **This repository is freeware.**
+
+#### Original Game Files
+
+This project requires original game files, such as the original source archive, which holds the game data, to run.
+
+**Original game files are not included in this project.**
+
+Users must obtain and provide their own game files from a legally authorized source. Before downloading or using this engine, users are required to confirm that they possess a legally obtained copy of the original game.
+
+Neither this repository nor the published packages contain the game data. On first launch the game offers to fetch the archive where its authors published it, and only with the user's consent; a local copy always takes precedence.
+
+Eloane Studio does not host, distribute, or provide unauthorized copies of copyrighted game assets.
+
+#### Copyright & Trademarks
+
+All original game names, trademarks, graphics, music, and other proprietary assets of *Breathless* remain the property of their respective copyright holders (Fields of Vision).
+
+This project is an independent, unofficial implementation and is not affiliated with, endorsed by, or sponsored by the original game's developers or publishers.
+
+#### Preservation
+
+The purpose of this project is to preserve the technical behavior and gameplay experience of classic video games while making them accessible on modern systems.
+
+The engine is provided for compatibility, preservation, and educational purposes.
+
+#### Credits
+
+Original game: Fields of Vision (1995-96). The P61A module player shipped with the sources is by Jarno Paananen; this port does not use it: its decoder reimplements the *format* from the public description in [p61aconv](https://github.com/howprice/p61aconv), under the MIT licence. Java port: **Guillaume Monet**.
+
+</details>

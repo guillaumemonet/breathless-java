@@ -1,657 +1,617 @@
 # Breathless Java
 
-Portage en Java de **Breathless** (Fields of Vision, 1995-96), FPS texture-mappé pour
-Amiga AGA. jMonkeyEngine fournit la fenêtre, le clavier et le son.
+*[Version française](README_fr.md)*
 
-![Le jeu](docs/images/jeu.png)
+A Java port of **Breathless** (Fields of Vision, 1995-96), a texture-mapped FPS for the
+Amiga AGA. jMonkeyEngine provides the window, the keyboard and the sound.
 
-Le moteur est réécrit depuis l'assembleur 68k d'origine : raycaster, sprites, effets,
-combat, IA, panneau de bord, carte, terminal, son et musique — et vérifié contre les
-données du jeu.
+![The game](docs/images/jeu.png)
 
-**Ce n'est pas un émulateur**, ni de l'Amiga, ni même en partie du 68000 : aucune
-instruction 68k n'est exécutée, et le binaire d'origine n'est pas chargé. Chaque routine
-de l'assembleur a été lue et récrite en Java ; le jeu ne reprend de l'original que ses
-**données** — niveaux, textures, sprites, sons, musiques —, lues dans les fichiers `.GLD`
-tels qu'ils sont livrés. Rien n'émule non plus la puce graphique ni la puce sonore : le
-rendu est un raycaster logiciel, la musique un lecteur ProTracker écrit pour l'occasion.
+The engine is rewritten from the original 68k assembly: raycaster, sprites, effects,
+combat, AI, status panel, map, terminal, sound and music — and checked against the
+game data.
 
-![Extérieur](docs/images/exterieur.png)
+**This is not an emulator**, neither of the Amiga nor, even partly, of the 68000: no
+68k instruction is executed, and the original binary is not loaded. Every routine
+of the assembly has been read and rewritten in Java; the only thing the game takes from the
+original is its **data** — levels, textures, sprites, sounds, music —, read from the `.GLD`
+files as they are shipped. Nothing emulates the graphics chip or the sound chip either: the
+renderer is a software raycaster, the music a ProTracker player written for the purpose.
 
-## Parti pris
+![Outdoors](docs/images/exterieur.png)
 
-**Port fidèle du raycaster.** Le moteur d'origine est réécrit en Java à l'identique :
-lancer de rayons DDA une passe par colonne, rendu dans un tampon *chunky* 320x200 en
-palette 256 couleurs. jMonkeyEngine n'affiche ce tampon que comme une texture plein
-écran, et prend en charge la fenêtre, les entrées et l'audio.
+## Design choice
 
-Ce choix privilégie la fidélité au pixel plutôt que l'exploitation du GPU. Les
-conséquences sont assumées :
+**A faithful port of the raycaster.** The original engine is rewritten in Java identically:
+DDA ray casting one pass per column, rendered into a 320x200 *chunky* buffer with a
+256-colour palette. jMonkeyEngine only displays this buffer as a full-screen
+texture, and handles the window, input and audio.
 
-- pas de vraie 3D, donc pas de rotation verticale libre — seulement le décalage vertical
-  du regard (`LookHeight`) de l'original, que le portage reprend ;
-- la géométrie reste contrainte à la grille de blocs ;
-- l'essentiel du travail est du portage 1:1 de code assembleur documenté.
+This choice favours pixel fidelity over making use of the GPU. The
+consequences are accepted:
 
-**Formats d'origine lus directement, et exportables.** Le jeu ouvre les `.GLD` tels
-quels — décompression comprise — ce qui évite d'entretenir une copie des données. L'outil
-`gld-cli` sert à les *inspecter* : il exporte textures, sprites, images, sons, modules
-ProTracker et cartes en PNG, WAV et `.mod`. C'est par lui que chaque format a été vérifié
-avant d'être branché dans le moteur.
+- no real 3D, hence no free vertical rotation — only the original's vertical shift
+  of the view (`LookHeight`), which the port carries over;
+- the geometry remains constrained to the block grid;
+- most of the work is a 1:1 port of documented assembly code.
+
+**Original formats read directly, and exportable.** The game opens the `.GLD` files as
+they are — decompression included — which avoids maintaining a copy of the data. The
+`gld-cli` tool is used to *inspect* them: it exports textures, sprites, pictures, sounds, ProTracker
+modules and maps as PNG, WAV and `.mod`. It is through this tool that each format was checked
+before being wired into the engine.
 
 ## Structure
 
-| Module | Rôle |
+| Module | Role |
 |---|---|
-| `gld-core` | lecture des formats d'origine : décompression SLZ/VDCO, parseurs `.GLD` |
-| `engine` | raycaster et rastérisation logicielle — Java pur, sans dépendance graphique |
-| `gld-cli` | outils en ligne de commande : inspection, export PNG, rendu d'images fixes |
-| `game` | coquille jMonkeyEngine : fenêtre, entrées, audio |
+| `gld-core` | reading the original formats: SLZ/VDCO decompression, `.GLD` parsers |
+| `engine` | raycaster and software rasterisation — pure Java, no graphics dependency |
+| `gld-cli` | command-line tools: inspection, PNG export, rendering of still images |
+| `game` | jMonkeyEngine shell: window, input, audio |
 
-Le moteur est volontairement isolé de jMonkeyEngine : il produit un tampon 320×200 en
-index de palette, que la coquille se contente d'afficher. Cela permet de le tester et de
-le déboguer en écrivant des PNG, sans ouvrir de fenêtre.
+The engine is deliberately isolated from jMonkeyEngine: it produces a 320×200 buffer of
+palette indices, which the shell merely displays. This makes it possible to test and
+debug it by writing PNGs, without opening a window.
 
-Une image complète coûte environ **0,13 ms** sur un cœur, soit de l'ordre de 7 000 images
-par seconde. Le rendu logiciel ne sera pas le facteur limitant, et rien n'est alloué
-pendant une image.
+A complete frame costs about **0.13 ms** on one core, i.e. on the order of 7,000 frames
+per second. Software rendering will not be the limiting factor, and nothing is allocated
+during a frame.
 
-### Les trois passes d'une image
+### The three passes of a frame
 
-1. **Rayons** — une DDA par colonne, qui n'enregistre que les *changements* de bloc.
-2. **Murs** — pans verticaux du plus proche au plus lointain, avec deux bornes de découpe
-   qui se resserrent. Les pixels laissés libres sont marqués « sol » ou « plafond » de tel
-   bloc.
-3. **Surfaces horizontales** — les pixels marqués sont regroupés en segments par ligne.
-   Sur une ligne, la profondeur est constante : le placage y est affine, donc linéaire.
-4. **Objets** — sprites triés du plus lointain au plus proche, chaque colonne découpée
-   contre les bornes que la passe des murs a laissées à cette profondeur. Pas de tampon
-   de profondeur : un objet derrière un mur disparaît de lui-même.
+1. **Rays** — one DDA per column, which records only the block *changes*.
+2. **Walls** — vertical spans from nearest to farthest, with two clipping bounds
+   that close in. The pixels left free are marked "floor" or "ceiling" of a given
+   block.
+3. **Horizontal surfaces** — the marked pixels are grouped into segments per line.
+   Along a line, the depth is constant: the mapping there is affine, hence linear.
+4. **Objects** — sprites sorted from farthest to nearest, each column clipped
+   against the bounds the wall pass left at that depth. No depth
+   buffer: an object behind a wall disappears by itself.
 
-### Les effets
+### Effects
 
-Chaque bloc porte un **numéro de trigger** ; tous ceux qui partagent le même numéro
-bougent ensemble, ce qui fait qu'une porte large de trois cases s'ouvre d'un seul tenant.
-Marcher sur un bloc déclenche sa liste d'effets, chaque entrée visant un trigger. Un effet
-occupe un emplacement parmi 42 et avance d'un pas par cinquantième de seconde jusqu'à se
-retirer de lui-même.
+Each block carries a **trigger number**; all those sharing the same number
+move together, which is why a door three cells wide opens in one piece.
+Walking onto a block fires its effect list, each entry targeting a trigger. An effect
+occupies one of 42 slots and advances one step per fiftieth of a second until it
+removes itself.
 
-Les hauteurs de sol et de plafond vivent donc dans un **état mutable** du monde, séparé
-des blocs issus du fichier, qui restent la description d'origine intacte.
+Floor and ceiling heights therefore live in a **mutable state** of the world, separate
+from the blocks coming from the file, which remain the intact original description.
 
-Une porte refuse de se refermer sur le joueur ou sur un ennemi : elle repart vers le haut,
-refait sa pause, et retente. Les restes d'un ennemi tombé dessous disparaissent quand elle
-se referme.
+A door refuses to close on the player or on an enemy: it goes back up,
+pauses again, and retries. The remains of an enemy that fell beneath it disappear when it
+closes.
 
-Deux façons de finir, et la différence se voit : un effet qui va et vient — une porte, un
-ascenseur — rend la main à son trigger, et repart au prochain passage ; un effet
-**définitif** — un plafond qui descend, une porte qui reste ouverte, une lumière qui
-change — la garde pour toujours. Sans cela, un plafond redescendrait à chaque passage
-jusqu'à passer sous le sol.
+Two ways of finishing, and the difference shows: an effect that comes and goes — a door, a
+lift — hands its trigger back, and starts again on the next pass; a
+**permanent** effect — a ceiling that comes down, a door that stays open, a light that
+changes — keeps it forever. Without this, a ceiling would come down again on every pass
+until it went below the floor.
 
-Un interrupteur exige la **clé** que porte l'entrée : sans elle, rien ne s'ouvre et le jeu
-le dit ; avec elle, la clé sert, et disparaît.
+A switch requires the **key** carried by the entry: without it, nothing opens and the game
+says so; with it, the key is used, and disappears.
 
-Les trois sortes de portes ne se ressemblent pas, et c'est le plan qu'elles déplacent qui
-les distingue : **`DoorUp`** lève le plafond, **`Door2`** — la porte « a due ante », à deux
-battants — lève le plafond *et* abaisse le sol d'autant, **`DoorDown`** abaisse le sol
-seul. Le niveau 1 en compte huit, quatre de chaque sorte extrême ; les portes à deux
-battants n'apparaissent qu'à partir du quatrième niveau.
+The three kinds of doors do not look alike, and what sets them apart is the plane they
+move: **`DoorUp`** raises the ceiling, **`Door2`** — the "a due ante" door, with two
+leaves — raises the ceiling *and* lowers the floor by the same amount, **`DoorDown`** lowers the floor
+alone. Level 1 has eight of them, four of each extreme kind; the two-leaf
+doors only appear from the fourth level onwards.
 
-### Les animations
+### Animations
 
-Deux cadences, toutes deux plus lentes que l'affichage :
+Two rates, both slower than the display:
 
-- **textures** : une image toutes les 8 (6,25 par seconde) ;
-- **objets à animation simple** : une image toutes les 4 (12,5 par seconde).
+- **textures**: one frame every 8 (6.25 per second);
+- **objects with simple animation**: one frame every 4 (12.5 per second).
 
-L'animation d'un objet appartient à son **type**, pas à ses instances : tous les bidons
-d'acide d'un niveau bouillonnent à l'unisson. Les ennemis ont leurs huit poses de marche,
-calées sur l'horloge comme le fait `WALKANIM`, et leurs poses de tir et de chute ; tirs et
-explosions avancent à 12,5 images par seconde.
+An object's animation belongs to its **type**, not to its instances: all the acid
+drums in a level bubble in unison. Enemies have their eight walking poses,
+locked to the clock as `WALKANIM` does, and their firing and falling poses; shots and
+explosions advance at 12.5 frames per second.
 
-Usage réel dans les vingt niveaux, qui a guidé les priorités :
+Actual usage across the twenty levels, which guided the priorities:
 
-| Effet | Occurrences | État |
+| Effect | Occurrences | Status |
 |---|---:|---|
-| Réveiller un ennemi | 519 | porté |
-| Porte, Porte 2, Porte descendante | 311 | porté |
-| Ascenseurs | 66 | porté |
-| Sols et plafonds mobiles | 14 | porté |
-| Lumières clignotantes | 39 | porté |
-| Terminal, téléportation, fin de niveau | 112 | porté |
-| Lumières liées | 37 | porté |
+| Wake an enemy | 519 | ported |
+| Door, Door 2, Down door | 311 | ported |
+| Lifts | 66 | ported |
+| Moving floors and ceilings | 14 | ported |
+| Flashing lights | 39 | ported |
+| Terminal, teleport, end of level | 112 | ported |
+| Linked lights | 37 | ported |
 
-Les effets 1, 9, 10 et 18 du catalogue ne sont utilisés par aucun niveau.
+Effects 1, 9, 10 and 18 of the catalogue are used by no level.
 
-La spécification des formats binaires est dans [`docs/formats-gld.md`](docs/formats-gld.md).
+The specification of the binary formats is in [`docs/formats-gld.md`](docs/formats-gld.md).
 
-## Installer
+## Installing
 
-La page des [releases](https://github.com/guillaumemonet/breathless-java/releases) porte
-une archive par système. Il n'y a rien à installer : on décompresse, et on lance
-`Breathless`. Le paquet porte son propre Java, aucun n'est requis sur la machine.
+The [releases](https://github.com/guillaumemonet/breathless-java/releases) page carries
+one archive per system. There is nothing to install: unpack it, and run
+`Breathless`. The package carries its own Java; none is required on the machine.
 
-**Les données du jeu n'y sont pas** — ce dépôt n'en redistribue aucune. Au premier
-lancement, le jeu demande s'il peut aller chercher l'archive des sources d'origine,
-[mheyer32/Breathless](https://github.com/mheyer32/Breathless), soit environ 2,5 Mo. Il la
-range une fois pour toutes dans le répertoire de l'utilisateur — `%LOCALAPPDATA%\Breathless\data`
-sous Windows, `~/Library/Application Support/Breathless/data` sous macOS,
-`~/.local/share/breathless/data` sous Linux — et les lancements suivants la retrouvent
-sans rien demander.
+**The game data is not included** — this repository redistributes none of it. On first
+launch, the game asks whether it may fetch the archive of the original sources,
+[mheyer32/Breathless](https://github.com/mheyer32/Breathless), about 2.5 MB. It
+stores it once and for all in the user's directory — `%LOCALAPPDATA%\Breathless\data`
+on Windows, `~/Library/Application Support/Breathless/data` on macOS,
+`~/.local/share/breathless/data` on Linux — and later launches find it
+without asking anything.
 
-Une copie locale l'emporte toujours, dans cet ordre : le répertoire donné en argument, la
-propriété `-Dbreathless.data=<chemin>`, l'archive posée à côté du jeu, puis celle qu'un
-lancement précédent a rangée. Qui a déjà les sources n'a donc rien à télécharger.
+A local copy always takes precedence, in this order: the directory given as an argument, the
+`-Dbreathless.data=<path>` property, the archive placed next to the game, then the one a
+previous launch stored. Anyone who already has the sources therefore has nothing to download.
 
-## Construire et lancer
+## Building and running
 
-Nécessite un JDK 21 (le *toolchain* Gradle s'en charge).
+Requires JDK 21 (the Gradle *toolchain* takes care of it).
 
 ```bash
 gradle build
 
-# Inventaire des fichiers de données d'origine
-gradle cli --args="probe <chemin vers les .GLD>"
+# Inventory of the original data files
+gradle cli --args="probe <path to the .GLD files>"
 
-# Résumé des vingt niveaux
-gradle cli --args="levels <chemin vers les .GLD>"
+# Summary of the twenty levels
+gradle cli --args="levels <path to the .GLD files>"
 
-# Détail d'un niveau, avec aperçu ASCII de la carte
-gradle cli --args="level <chemin>/BLES0006.GLD"
+# Details of one level, with an ASCII preview of the map
+gradle cli --args="level <path>/BLES0006.GLD"
 
-# Export de la carte automatique d'un niveau, au départ puis complète
-gradle cli --args="map <chemin vers les .GLD> <chemin>/BLES0006.GLD <sortie>"
+# Export of a level's automap, at the start and then complete
+gradle cli --args="map <path to the .GLD files> <path>/BLES0006.GLD <output>"
 
-# Export des dix images plein écran en PNG
-gradle cli --args="pictures <chemin vers les .GLD> <répertoire de sortie>"
+# Export of the ten full-screen pictures as PNG
+gradle cli --args="pictures <path to the .GLD files> <output directory>"
 
-# Conversion des morceaux P61A en modules ProTracker, et rendu WAV
-gradle cli --args="modules <chemin vers les .GLD> <répertoire de sortie>"
+# Conversion of the P61A tunes into ProTracker modules, and WAV rendering
+gradle cli --args="modules <path to the .GLD files> <output directory>"
 
-# Inventaire de la banque sonore et export des bruitages en WAV
-gradle cli --args="sounds <chemin vers les .GLD> <répertoire de sortie>"
+# Inventory of the sound bank and export of the sound effects as WAV
+gradle cli --args="sounds <path to the .GLD files> <output directory>"
 
-# Export des quatre pages du terminal
-gradle cli --args="terminal <chemin vers les .GLD> <répertoire de sortie>"
+# Export of the four terminal pages
+gradle cli --args="terminal <path to the .GLD files> <output directory>"
 
-# Export du panneau de bord, vide, rempli, et sous une vue de jeu
-gradle cli --args="panel <chemin vers les .GLD> <répertoire de sortie>"
+# Export of the status panel, empty, filled, and under a game view
+gradle cli --args="panel <path to the .GLD files> <output directory>"
 
-# Export de la palette, de la rampe d'éclairage et des 97 textures en PNG
-gradle cli --args="textures <chemin vers les .GLD> <répertoire de sortie>"
+# Export of the palette, the lighting ramp and the 97 textures as PNG
+gradle cli --args="textures <path to the .GLD files> <output directory>"
 
-# Export des sprites d'objets en PNG transparents
-gradle cli --args="sprites <chemin vers les .GLD> <répertoire de sortie>"
+# Export of the object sprites as transparent PNGs
+gradle cli --args="sprites <path to the .GLD files> <output directory>"
 
-# Rendu de vues fixes depuis le point de départ d'un niveau
-gradle cli --args="render <chemin vers les .GLD> <chemin>/BLES0006.GLD <sortie>"
+# Rendering of still views from a level's starting point
+gradle cli --args="render <path to the .GLD files> <path>/BLES0006.GLD <output>"
 ```
 
-### Construire le paquet
+### Building the package
 
 ```bash
 gradle :game:packageZip
 ```
 
-`jpackage` produit un répertoire autonome, avec son propre JRE et l'exécutable du jeu, que
-la tâche compresse dans `game/build/distributions`. Il ne se construit que pour le système
-qui le fabrique : c'est une contrainte de `jpackage`, pas un choix.
+`jpackage` produces a self-contained directory, with its own JRE and the game executable, which
+the task compresses into `game/build/distributions`. It can only be built for the system
+that builds it: this is a `jpackage` constraint, not a choice.
 
-Le runtime est réduit aux modules réellement employés, et seuls les natifs LWJGL du
-système visé sont embarqués — sans quoi l'archive pèserait le double.
+The runtime is reduced to the modules actually used, and only the LWJGL natives of the
+target system are bundled — otherwise the archive would weigh twice as much.
 
 ### Android
 
-La release porte aussi un **APK**, pour Android 14 ou plus récent. Il s'installe hors
-boutique : autoriser l'installation d'applications de cette source, puis ouvrir le
-fichier. Comme sur le poste de travail, il ne contient aucune donnée du jeu et propose de
-les télécharger au premier lancement ; elles sont rangées dans le stockage de
-l'application.
+The release also carries an **APK**, for Android 14 or later. It is installed outside
+the store: allow installing apps from this source, then open the
+file. As on the desktop, it contains no game data and offers to
+download it on first launch; it is stored in the app's
+storage.
 
-L'image garde ses proportions au centre de l'écran, en paysage, et les commandes tactiles
-occupent les bandes laissées libres :
+The picture keeps its proportions in the centre of the screen, in landscape, and the touch controls
+occupy the strips left free:
 
-| Commande | Action |
+| Control | Action |
 |---|---|
-| Joystick, à gauche | avancer, reculer, tourner ; poussé à fond, courir ; dans un menu, déplacer le choix |
-| TIR, ACTION, ARME, CARTE, MENU, à droite | comme au clavier |
-| Toucher l'image | passer un écran fixe, valider un choix de menu |
-| Retour | menu |
+| Joystick, on the left | move forward, back, turn; pushed all the way, run; in a menu, move the selection |
+| FIRE, ACTION, WEAPON, MAP, MENU, on the right | as on the keyboard |
+| Touching the picture | skip a still screen, confirm a menu choice |
+| Back | menu |
 
-À « REALLY QUIT ? », faute de touches Y et N, ACTION répond oui et MENU non.
+At "REALLY QUIT ?", lacking Y and N keys, ACTION answers yes and MENU no.
 
-L'APK se construit à part, dans `android/`, un build Gradle qui reprend les sources du
-moteur et de la coquille telles quelles — seuls le lancement en ligne de commande et les
-boîtes de dialogue Swing en sont écartés. Il demande le SDK Android :
+The APK is built separately, in `android/`, a Gradle build that takes the sources of the
+engine and the shell as they are — only the command-line launcher and the
+Swing dialog boxes are left out. It requires the Android SDK:
 
 ```bash
 cd android
 ./gradlew assembleRelease
 ```
 
-L'APK est signé avec la clé de débogage : il s'installe tel quel, mais ne se publierait
-pas sur une boutique.
+The APK is signed with the debug key: it installs as is, but could not be published
+on a store.
 
-### Jouer
+### Playing
 
 ```bash
-gradle :game:run --args="<chemin vers les .GLD>"
+gradle :game:run --args="<path to the .GLD files>"
 ```
 
-| Touche | Action |
+| Key | Action |
 |---|---|
-| Flèches, ZQSD ou WASD | avancer, reculer, tourner |
-| `,` et `.` | pas de côté, qui se combine avec la rotation |
-| Alt | pas de côté forcé (les touches gauche/droite se déplacent au lieu de tourner) |
-| Début / Fin | regarder vers le haut / vers le bas ; Inser remet le regard droit |
-| Espace, E ou Entrée | **actionner** : ouvrir une porte face à soi, appeler un ascenseur |
-| Ctrl | tirer |
-| Maj | courir |
-| Tab | **carte** — elle remplace la vue et suspend le jeu, comme dans l'original |
-| 1 à 6 | choisir une arme |
-| X | arme suivante |
-| + / − | agrandir ou réduire la fenêtre de jeu |
-| Pavé 7 8 9 0 | grosseur des pixels : 1×1, 2×1, 1×2, 2×2 |
-| Page préc. / suiv. | changer de niveau |
+| Arrows, ZQSD or WASD | move forward, back, turn |
+| `,` and `.` | sidestep, which combines with turning |
+| Alt | forced sidestep (the left/right keys move instead of turning) |
+| Home / End | look up / down; Insert straightens the view |
+| Space, E or Enter | **use**: open a door you are facing, call a lift |
+| Ctrl | fire |
+| Shift | run |
+| Tab | **map** — it replaces the view and pauses the game, as in the original |
+| 1 to 6 | choose a weapon |
+| X | next weapon |
+| + / − | enlarge or shrink the game window |
+| Keypad 7 8 9 0 | pixel size: 1×1, 2×1, 1×2, 2×2 |
+| Page Up / Down | change level |
 | P | pause |
-| Échap | menu de configuration — il porte la commande de sortie |
+| Esc | configuration menu — it holds the quit command |
 
-Les commandes de la première moitié du tableau se redéfinissent dans la page clavier du
-menu, comme les treize de l'original ; la carte, la pause, les armes et les réglages
-d'affichage gardent leurs touches.
+The controls in the first half of the table can be redefined in the keyboard page of the
+menu, like the original's thirteen; the map, pause, weapons and display
+settings keep their keys.
 
-Au démarrage, le jeu affiche la carte graphique qu'il utilise (`GL_RENDERER`). Sur un
-portable à deux cartes, Windows donne la carte intégrée à `java.exe` : le jeu le signale
-alors à l'écran et demande s'il doit continuer. Le correctif : Paramètres Windows →
-Système → Affichage → Graphiques → ajouter `java.exe` et `javaw.exe` → « Hautes
-performances ». `-Dbreathless.gpu=ok` laisse l'avertissement mais ne pose plus la question.
+On startup, the game shows the graphics card it is using (`GL_RENDERER`). On a
+laptop with two graphics cards, Windows gives the integrated card to `java.exe`: the game then reports it
+on screen and asks whether it should continue. The fix: Windows Settings →
+System → Display → Graphics → add `java.exe` and `javaw.exe` → "High
+performance". `-Dbreathless.gpu=ok` keeps the warning but no longer asks the question.
 
-La simulation tourne à **pas fixe, 50 Hz** — la fréquence PAL pour laquelle les constantes
-de déplacement d'origine ont été réglées. L'affichage, lui, suit la fréquence de l'écran.
+The simulation runs at a **fixed step, 50 Hz** — the PAL frequency the original movement
+constants were tuned for. The display, for its part, follows the screen's refresh rate.
 
-Les tests d'intégration sur les données d'origine sont ignorés si celles-ci sont
-absentes. Pour les activer :
+The integration tests on the original data are skipped if the data is
+absent. To enable them:
 
 ```bash
-gradle test -Dbreathless.data=<chemin vers les .GLD>
+gradle test -Dbreathless.data=<path to the .GLD files>
 ```
 
-### Les écrans fixes
+### Still screens
 
-![Écran de titre](docs/images/titre.png)
+![Title screen](docs/images/titre.png)
 
-![Présentation du premier monde](docs/images/monde1.png)
+![Introduction of the first world](docs/images/monde1.png)
 
-La banque graphique contient dix images plein écran — le titre, les quatre présentations
-de monde, deux logos, les crédits, la bannière de fin de partie et l'écran final. Toutes
-sont compressées en **VDCO**, la même compression que les conteneurs `.GLD`. Chaque image
-porte sa propre palette, qui remplace celle du jeu le temps de l'afficher, et sa propre
-position : le titre couvre l'écran, la bannière de fin ne fait que 288×40 et se pose au
-milieu.
+The graphics bank contains ten full-screen pictures — the title, the four world
+introductions, two logos, the credits, the game-over banner and the final screen. All
+are compressed in **VDCO**, the same compression as the `.GLD` containers. Each picture
+carries its own palette, which replaces the game's while it is displayed, and its own
+position: the title covers the screen, the game-over banner is only 288×40 and sits in the
+middle.
 
-La séquence est celle de l'original. Les deux logos puis le titre, sur la musique des
-titres ; une touche ouvre le menu de la présentation, d'où **START GAME** lance la partie
-au niveau que dit le code d'accès. Chaque niveau s'ouvre sur son **écran de chargement** :
-l'image du monde, le nom du monde et de l'arène lus dans le fichier maître
-`BREATHLESS.GLD`, les tentatives restantes et le code d'accès, sur la musique `MUSL` ;
-une touche lance le niveau. La mort fait s'effondrer le joueur, puis reprend le niveau
-s'il reste des tentatives ; sinon la bannière de fin de partie, puis le titre — le code
-d'accès reste celui du dernier niveau atteint. Les crédits, l'écran final et la bannière
-passent seuls au bout de leur temps, une touche les abrège.
+The sequence is the original's. The two logos then the title, over the title
+music; a key opens the introduction menu, from which **START GAME** starts the game
+at the level given by the access code. Each level opens on its **loading screen**:
+the world picture, the world and arena names read from the master file
+`BREATHLESS.GLD`, the remaining attempts and the access code, over the `MUSL` music;
+a key starts the level. Death makes the player collapse, then restarts the level
+if attempts remain; otherwise the game-over banner, then the title — the access
+code remains that of the last level reached. The credits, the final screen and the banner
+move on by themselves when their time is up; a key cuts them short.
 
-![Écran de chargement](docs/images/chargement.png)
+![Loading screen](docs/images/chargement.png)
 
-Les textes de l'écran de chargement sont posés où `LoadingScreen` les pose, dans les
-couleurs 254 et 255 de la palette de l'image — d'où le rouge de « PRESS ANY KEY TO
-START ». Le premier niveau du premier monde n'affiche pas de code : c'est le code de
-départ.
+The loading screen texts are placed where `LoadingScreen` places them, in
+colours 254 and 255 of the picture's palette — hence the red of "PRESS ANY KEY TO
+START". The first level of the first world shows no code: it is the starting
+code.
 
-### La fenêtre de jeu
+### The game window
 
-![Fenêtre réduite, gros pixels](docs/images/fenetre-reduite.png)
+![Reduced window, big pixels](docs/images/fenetre-reduite.png)
 
-Huit tailles, de 96×60 à 320×200 par pas de 32×20, et quatre grosseurs de pixel : 1×1,
-2×1, 1×2, 2×2. C'est ainsi que l'original se réglait pour gagner de la vitesse — moins de
-colonnes et de lignes à calculer, l'image restant de même taille à l'écran. Le rendu se
-fait à la taille réduite puis se répète : un pixel double est un gros pixel, pas une image
-lissée.
+Eight sizes, from 96×60 to 320×200 in steps of 32×20, and four pixel sizes: 1×1,
+2×1, 1×2, 2×2. This is how the original was tuned to gain speed — fewer
+columns and lines to compute, with the picture remaining the same size on screen. Rendering is
+done at the reduced size and then repeated: a double pixel is a big pixel, not a smoothed
+picture.
 
-Une fenêtre réduite laisse voir la **tenture** qui l'entoure, `Graphic/Background01.raw`,
-une tuile de 128×128 répétée sur toute la vue.
+A reduced window reveals the **backdrop** surrounding it, `Graphic/Background01.raw`,
+a 128×128 tile repeated over the whole view.
 
-### Les codes de niveau
+### Level codes
 
-Seize caractères rendent une partie : santé, boucliers, énergie, crédits, les six armes
-avec leur amélioration, l'arme en main, le monde et le niveau. Dix octets sont assemblés,
-brouillés par un ou exclusif avec une clé de 32 bits, puis découpés en seize groupes de
-cinq bits — d'où un alphabet de trente-deux symboles, `1` à `9` puis `A` à `W`.
+Sixteen characters capture a game: health, shields, energy, credits, the six weapons
+with their upgrade, the weapon in hand, the world and the level. Ten bytes are assembled,
+scrambled by an exclusive or with a 32-bit key, then cut into sixteen groups of
+five bits — hence an alphabet of thirty-two symbols, `1` to `9` then `A` to `W`.
 
-Le portage est **exact** : le code de départ écrit en dur dans le jeu,
-`181CEIGGLJRJSE2T`, se relit et **se réécrit caractère pour caractère**. Un test le
-vérifie, et c'est lui qui a révélé le seul écart qui restait — l'original applique sa clé
-en deux mots longs puis *un mot*, si bien que les deux derniers octets voient le mot bas
-de la clé et non son mot haut.
+The port is **exact**: the starting code hard-coded in the game,
+`181CEIGGLJRJSE2T`, reads back and **rewrites character for character**. A test
+checks it, and it is this test that revealed the only remaining discrepancy — the original applies its key
+as two long words then *one word*, so that the last two bytes see the low word
+of the key and not its high word.
 
-L'écran de chargement de chaque niveau montre son code, qui devient le code d'accès. Il se
-saisit dans les options de jeu, avant la partie, et s'accepte aussi au lancement :
+Each level's loading screen shows its code, which becomes the access code. It can be
+entered in the game options, before the game, and is also accepted at launch:
 
 ```bash
 gradle run --args="../Breathless 181CEIGGLJRJSE2T"
 ```
 
-### La carte
+### The map
 
-![Carte automatique](docs/images/carte.png)
+![Automap](docs/images/carte.png)
 
-Tabulation montre la carte : elle remplace la vue et suspend le jeu, exactement comme
-l'original. Le relevé se fait en avançant — trois rayons partent du regard du joueur et
-marquent les cases traversées jusqu'à un mur ou une porte fermée. Le tracé dit ce que vaut
-chaque passage : **blanc** infranchissable, **gris** franchissable, **jaune** marche ou
-changement de plafond, fond sombre pour le sol déjà relevé.
+Tab shows the map: it replaces the view and pauses the game, exactly like
+the original. The survey is made as you advance — three rays leave from the player's view and
+mark the cells crossed up to a wall or a closed door. The drawing tells what each
+passage is worth: **white** impassable, **grey** passable, **yellow** step or
+ceiling change, dark background for floor already surveyed.
 
-### Le son
+### Sound
 
-La banque `SGLD` a la même forme que la banque graphique : un catalogue de noms de quatre
-caractères, chacun pointant sur un enregistrement de seize octets — longueur, période
-Amiga, volume, boucle, priorité, canaux, type. Trois sortes d'enregistrements, que
-`InitAudio` démêle et que le parseur reproduit :
+The `SGLD` bank has the same shape as the graphics bank: a catalogue of four-character
+names, each pointing to a sixteen-byte record — length, Amiga
+period, volume, loop, priority, channels, type. Three kinds of records, which
+`InitAudio` sorts out and the parser reproduces:
 
-- l'échantillon suit l'en-tête ;
-- l'en-tête porte le **nom d'un autre son**, dont il reprend l'échantillon avec sa propre
-  période et son propre volume — le cri d'un Devil est celui d'un autre monstre, joué plus
-  bas ;
-- l'en-tête est un **tirage au sort** entre trois sons nommés.
+- the sample follows the header;
+- the header carries the **name of another sound**, whose sample it reuses with its own
+  period and its own volume — a Devil's scream is that of another monster, played lower;
+- the header is a **random draw** between three named sounds.
 
-Quarante des quarante-sept entrées sont des bruitages, sept sont des morceaux. La fréquence
-se déduit de la période : `3 546 895 / période`, l'horloge PAL.
+Forty of the forty-seven entries are sound effects, seven are tunes. The frequency
+is derived from the period: `3546895 / period`, the PAL clock.
 
-Les bruitages sont joués : porte qui roule puis qui bute, interrupteur, téléport, pas,
-ramassage, tir, arme vide, impact, mort, explosion, réveil d'ennemi, cri du joueur. Comme
-sur l'Amiga, ils se partagent **quatre canaux** : chacun a sa priorité, que la distance
-abaisse, et son volume baisse avec elle jusqu'à se taire au-delà de vingt-deux blocs. Un
-son « seul » ne se relance pas tant qu'il joue, et une porte garde son canal, si bien que
-le choc de fin de course coupe le roulement.
+The sound effects are played: a door rolling then hitting its stop, switch, teleport, footsteps,
+pickup, shot, empty weapon, impact, death, explosion, enemy waking, player's scream. As
+on the Amiga, they share **four channels**: each has its priority, which distance
+lowers, and its volume drops with it until it falls silent beyond twenty-two blocks. A
+"single" sound does not restart while it is playing, and a door keeps its channel, so that
+the end-of-travel thud cuts off the rolling.
 
-#### La musique
+#### Music
 
-Les sept morceaux sont au format **P61A** — The Player 6.1, un empaqueteur de modules
-ProTracker. Le décodeur est écrit d'après la **description publique du format**, celle de
-l'outil [p61aconv](https://github.com/howprice/p61aconv) de Huw Price sous licence MIT,
-elle-même adossée au guide Player61A. Il n'emprunte rien au lecteur d'origine, qui
-appartient à Jarno Paananen : c'est le format qui est réimplémenté, pas son code.
+The seven tunes are in **P61A** format — The Player 6.1, a packer for ProTracker
+modules. The decoder is written from the **public description of the format**, that of
+Huw Price's [p61aconv](https://github.com/howprice/p61aconv) tool under the MIT licence,
+itself based on the Player61A guide. It borrows nothing from the original player, which
+belongs to Jarno Paananen: it is the format that is reimplemented, not its code.
 
-Un module P61A range ses motifs piste par piste et les comprime par répétition : lignes
-vides, lignes identiques, et sauts en arrière pour rejouer un bloc déjà lu. Une fois
-déplié, on retrouve du ProTracker exact — même table de périodes, mêmes effets.
+A P61A module stores its patterns track by track and compresses them by repetition: empty
+lines, identical lines, and backward jumps to replay a block already read. Once
+unfolded, you get exact ProTracker — same period table, same effects.
 
-La conversion est vérifiée sur les sept morceaux : **aucune des quelque 8 300 notes ne
-tombe hors de la table des périodes ProTracker**, les fichiers `.mod` produits ont
-exactement la taille que leur en-tête annonce, et les séquences ne visent que des motifs
-existants.
+The conversion is checked on the seven tunes: **none of the roughly 8,300 notes
+falls outside the ProTracker period table**, the `.mod` files produced are
+exactly the size their header announces, and the sequences only target existing
+patterns.
 
-Un lecteur ProTracker rend ensuite le morceau en audio — quatre voies mélangées, arpège,
-portamento, vibrato, glissements de volume, sauts de position et de motif, réglages de
-vitesse. Le rendu se fait une fois, à l'écart du fil principal, puis le morceau tourne en
-boucle.
+A ProTracker player then renders the tune to audio — four mixed voices, arpeggio,
+portamento, vibrato, volume slides, position and pattern jumps, speed
+settings. Rendering is done once, away from the main thread, then the tune plays in a
+loop.
 
-### Le téléport et la fin de niveau
+### The teleport and the end of level
 
-Le téléport fond l'image vers le brouillard puis la ramène, et gèle le jeu le temps de
-l'aller-retour ; à trente-deux cinquantièmes, au plus fort du fondu, le joueur est déposé
-au centre de la case visée, élan coupé. La fin de niveau lève le drapeau de sortie ; la
-boucle principale fond alors l'image au noir avant d'enchaîner, et chaque niveau s'ouvre
-par le fondu inverse.
+The teleport fades the picture into the fog then brings it back, and freezes the game for the
+round trip; at thirty-two fiftieths, at the height of the fade, the player is set down
+at the centre of the target cell, momentum cut. The end of level raises the exit flag; the
+main loop then fades the picture to black before moving on, and each level opens
+with the reverse fade.
 
-La **lumière liée** suit la course d'un autre effet : une porte qui monte éclaire la pièce
-à mesure qu'elle s'ouvre, proportionnellement à son avancement.
+The **linked light** follows the travel of another effect: a door going up lights the room
+as it opens, in proportion to its progress.
 
-### Le menu de configuration
+### The configuration menu
 
-![Menu de configuration](docs/images/menu.png)
+![Configuration menu](docs/images/menu.png)
 
-Échap ouvre le menu, sur le même moniteur que le terminal — même police, mêmes pages,
-mêmes positions que `conf_page0` à `conf_page5`. En jeu : retour au jeu, fenêtre, son,
-clavier, contrôles et **QUIT GAME**, qui demande « REALLY QUIT ? (Y/N) » et ramène à la
-présentation. Avant la partie : **START GAME**, les mêmes pages, les options de jeu et les
-crédits. Les flèches déplacent le choix — d'un bout à l'autre de la page —, gauche et
-droite font défiler une valeur, Espace valide.
+Esc opens the menu, on the same monitor as the terminal — same font, same pages,
+same positions as `conf_page0` to `conf_page5`. In game: back to the game, window, sound,
+keyboard, controls and **QUIT GAME**, which asks "REALLY QUIT ? (Y/N)" and returns to the
+introduction. Before the game: **START GAME**, the same pages, the game options and the
+credits. The arrows move the selection — wrapping from one end of the page to the other —, left and
+right cycle a value, Space confirms.
 
-La page **clavier** redéfinit les treize commandes de l'original : choisir une ligne met le
-menu en attente, la touche suivante est affectée, et la commande qui l'employait la perd.
-Les touches réservées — Tab, Échap, P, 1 à 6, F1 à F6 et les touches fixes du portage —
-sont refusées, comme `keylist` les refusait. Échap abandonne.
+The **keyboard** page redefines the original's thirteen controls: choosing a line puts the
+menu on hold, the next key is assigned, and the control that was using it loses it.
+Reserved keys — Tab, Esc, P, 1 to 6, F1 to F6 and the port's fixed keys —
+are refused, as `keylist` refused them. Esc cancels.
 
-![Redéfinition des touches](docs/images/clavier.png)
+![Key redefinition](docs/images/clavier.png)
 
-La page **contrôles** règle l'inertie de la marche et de la rotation, et les vitesses, à
-pied et en course, comme `AdjustConfigVars` les traduisait.
+The **controls** page sets the inertia of walking and turning, and the speeds, on
+foot and running, as `AdjustConfigVars` translated them.
 
-La page **options de jeu**, avant la partie, laisse **saisir** le code d'accès — vérifié,
-« BAD ACCESS CODE ! » sinon —, le remettre au code de départ, et enregistrer les réglages
-dans `breathless.config`, repris au lancement suivant.
+The **game options** page, before the game, lets you **enter** the access code — checked,
+"BAD ACCESS CODE !" otherwise —, reset it to the starting code, and save the settings
+to `breathless.config`, loaded again at the next launch.
 
-### Le terminal
+### The terminal
 
-![Le terminal](docs/images/terminal.png)
+![The terminal](docs/images/terminal.png)
 
-Un effet de bloc ouvre le terminal, et le jeu s'arrête tant qu'il est là — le premier
-niveau en compte un, les suivants jusqu'à trois. C'est la **seule source d'armes du jeu** :
-`CollectWeapon` et `BoostWeapon` ne sont appelés de nulle part ailleurs. Quatre pages —
-accueil, armes, améliorations, accessoires — avec les prix d'origine, de 150 crédits pour
-dix points de bouclier à 35 000 pour la Death Machine.
+A block effect opens the terminal, and the game stops while it is up — the first
+level has one, the following ones up to three. It is the **game's only source of weapons**:
+`CollectWeapon` and `BoostWeapon` are called from nowhere else. Four pages —
+welcome, weapons, upgrades, accessories — with the original prices, from 150 credits for
+ten shield points to 35,000 for the Death Machine.
 
-On y navigue avec les mêmes touches qu'en jeu : avancer et reculer déplacent le choix,
-Espace valide.
+You navigate it with the same keys as in game: forward and back move the selection,
+Space confirms.
 
-L'original dessine ce menu avec des sprites matériels, sur un moniteur de 128×132 posé en
-haut à gauche, en deux couleurs sur fond transparent. Les textes, leurs positions et les
-prix sont ceux d'origine ; le fond est ici opaque, faute de quoi le texte se perd dans le
-décor, et les teintes exactes des sprites ne se déduisent pas de la source.
+The original draws this menu with hardware sprites, on a 128×132 monitor placed at the
+top left, in two colours on a transparent background. The texts, their positions and the
+prices are the original ones; the background is opaque here, otherwise the text gets lost in the
+scenery, and the exact tints of the sprites cannot be deduced from the source.
 
-### Le combat
+### Combat
 
-Le tir se compte en **pressions**, pas en temps : chaque appui met un tir en file, la file
-se vide d'un tir par image, et il n'y a pas d'autre délai de rechargement. Toutes les armes
-sont donc au coup par coup — sauf le lance-flammes, seul à porter le bit qui le rend
-continu. Aucune arme n'a l'autofire dans les données, et le code qui l'aurait géré est
-commenté dans l'original.
+Firing is counted in **presses**, not in time: each press queues a shot, the queue
+empties by one shot per frame, and there is no other reload delay. All weapons
+are therefore single-shot — except the flamethrower, the only one carrying the bit that makes it
+continuous. No weapon has autofire in the data, and the code that would have handled it is
+commented out in the original.
 
-Un ennemi abattu **tombe** dans la direction du tir, à huit pas par image, puis reste au
-sol : il n'est plus un ennemi, ne bouge plus et n'arrête plus les tirs. La chute n'a pas
-une longueur fixe — elle s'arrête dès que l'image ne change plus, ce qui fait deux images
-pour les uns et trois pour les autres.
+An enemy that is shot down **falls** in the direction of the shot, eight steps per frame, then stays on the
+ground: it is no longer an enemy, no longer moves and no longer stops shots. The fall does not have
+a fixed length — it stops as soon as the frame no longer changes, which makes two frames
+for some and three for others.
 
-Cinq des douze ennemis — WALK, EYE1, SKUL, TERM et SPID — n'ont **pas** d'animation de
-chute et **explosent** sur place. C'est leur dernière image de tir, égale à ce qui serait
-la première de leur chute, qui le dit. Ce qu'ils laissent dépend ensuite de leur
-explosion : le cadavre de l'ennemi pour les uns, la dernière image de l'explosion pour les
-autres. Dans tous les cas il reste quelque chose au sol. Un tir qui explose lui-même — les
-boules de feu, le plasma — fait exploser n'importe quel ennemi, chute ou non.
+Five of the twelve enemies — WALK, EYE1, SKUL, TERM and SPID — have **no** falling
+animation and **explode** on the spot. It is their last firing frame, equal to what would be
+the first of their fall, that tells. What they leave behind then depends on their
+explosion: the enemy's corpse for some, the last frame of the explosion for
+others. In every case something remains on the ground. A shot that itself explodes — the
+fireballs, the plasma — makes any enemy explode, falling or not.
 
-Les ennemis ne décident pas à chaque pas : `obj_cont1` espace leurs décisions, de trois
-passages quand ils visent à quarante-sept après un obstacle, ce qui leur donne leurs
-lignes droites. Ils contournent un obstacle dans un sens qu'ils gardent jusqu'à passer, ne
-se traversent pas, frappent le joueur au contact, et ne bougent que s'ils sont à moins de
-vingt blocs ou ont été vus à la dernière image.
+Enemies do not decide at every step: `obj_cont1` spaces out their decisions, from three
+passes when they are aiming to forty-seven after an obstacle, which gives them their
+straight lines. They go around an obstacle in a direction they keep until they get past, do not
+pass through one another, strike the player on contact, and only move if they are less than
+twenty blocks away or were seen in the last frame.
 
-Ces trois comparaisons portent sur l'**identité** des images, pas sur leur contenu : le
-moteur d'origine compare des pointeurs, et la banque d'objets partage donc une seule
-instance par image, si souvent qu'elle soit citée.
+These three comparisons are on the **identity** of the frames, not their content: the
+original engine compares pointers, and the object bank therefore shares a single
+instance per frame, however often it is referenced.
 
-Un corps qui s'abat **n'encaisse plus rien**. Le tir s'arrête bien sur lui, mais ne le
-blesse ni ne le tue une seconde fois — `MSctrlobjcoll1` le dit en toutes lettres, *« se il
-nemico sta cadendo non deve ucciderlo di nuovo »*. Sans cela une rafale rend au corps un
-statut vivant en pleine chute : il cesse d'être mort sans redevenir vivant, se fige, et le
-rendu lui reprend une pose de marche — l'ennemi reste debout.
+A body that is falling **takes nothing more**. The shot does stop on it, but neither
+wounds it nor kills it a second time — `MSctrlobjcoll1` says so in so many words, *« se il
+nemico sta cadendo non deve ucciderlo di nuovo »*. Without this a burst gives the body back a
+living status mid-fall: it stops being dead without becoming alive again, freezes, and the
+renderer gives it a walking pose again — the enemy stays standing.
 
-Un statut négatif — l'ennemi tire, tombe, ou gît — fait prendre son image à l'index
-absolu, sans passer par l'octant de direction.
+A negative status — the enemy is firing, falling, or lying down — makes its frame be taken at the
+absolute index, without going through the direction octant.
 
-Trois tentatives, comme dans l'original : la mort en consomme une et relance le niveau ;
-à court, la partie s'arrête et l'on revient au titre.
+Three attempts, as in the original: death uses one up and restarts the level;
+once they run out, the game stops and you return to the title.
 
-### Les objets
+### Objects
 
-Les sprites sont encodés en « posts » à la Doom : par colonne, des segments verticaux
-opaques séparés par du vide. Quarante-trois types d'objets, dont une douzaine d'ennemis,
-chacun avec ses poses directionnelles et ses animations de marche, de blessure et de mort.
+Sprites are encoded as Doom-style "posts": per column, opaque vertical segments
+separated by empty space. Forty-three object types, including a dozen enemies,
+each with its directional poses and its walking, wounded and death animations.
 
-![Quelques ennemis](docs/images/ennemis.png)
+![A few enemies](docs/images/ennemis.png)
 
-### Les objets en attente
+### Waiting objects
 
-Près de la moitié des objets d'un niveau attendent un déclencheur — dix-huit sur
-trente-neuf au premier niveau. Cette attente ne les rend pas absents : le moteur d'origine
-les inscrit dans la carte dès le chargement (`InitObjects`, TMapMain.asm) et ne consulte
-`obj_inactive` qu'au moment de faire bouger les ennemis. Un ennemi en attente **se voit,
-arrête les tirs et encaisse** ; il reste seulement immobile jusqu'à son réveil.
+Nearly half the objects in a level wait for a trigger — eighteen out of
+thirty-nine in the first level. This waiting does not make them absent: the original engine
+writes them into the map at load time (`InitObjects`, TMapMain.asm) and only checks
+`obj_inactive` when it comes to moving the enemies. A waiting enemy **can be seen,
+stops shots and takes hits**; it merely stays still until it wakes.
 
-### Le panneau de bord
+### The status panel
 
-![Panneau de bord](docs/images/panneau.png)
+![Status panel](docs/images/panneau.png)
 
-L'écran d'origine fait 320×240 : la vue occupe les deux cents premières lignes, le panneau
-les quarante dernières. Son fond n'est pas dans un `.GLD` — il était assemblé dans
-l'exécutable par `incbin "Graphic/Panel04.raw"`, une image de huit plans de bits que
-`PlanarImage` déplie en index de palette. Les chiffres viennent des deux polices de
-`Text.asm`, transcrites une fois pour toutes dans `ScoreFont`.
+The original screen is 320×240: the view occupies the first two hundred lines, the panel
+the last forty. Its background is not in a `.GLD` — it was assembled into
+the executable by `incbin "Graphic/Panel04.raw"`, an eight-bitplane image that
+`PlanarImage` unfolds into palette indices. The digits come from the two fonts of
+`Text.asm`, transcribed once and for all in `ScoreFont`.
 
-Une installation qui ne contiendrait que les fichiers de données n'aura pas cette image :
-le jeu démarre alors sans panneau et reprend le compte-rendu en console.
+An installation containing only the data files will not have this image:
+the game then starts without a panel and falls back to reporting on the console.
 
-### La palette et la rampe d'éclairage
+### The palette and the lighting ramp
 
-Les 256 couleurs du jeu, et les trente-deux niveaux d'éclairage qui les font s'assombrir
-avec la distance — un simple tableau d'index vers index, comme dans l'original.
+The game's 256 colours, and the thirty-two lighting levels that make them darken
+with distance — a simple index-to-index table, as in the original.
 
-![Palette et rampe d'éclairage](docs/images/palette.png)
+![Palette and lighting ramp](docs/images/palette.png)
 
-## Écarts assumés
+## Deliberate departures
 
-Le portage suit le moteur d'origine jusque dans ses bizarreries. Quelques points méritent
-d'être signalés parce qu'ils surprennent :
+The port follows the original engine down to its quirks. A few points deserve
+to be mentioned because they are surprising:
 
-- **Un tir ne teste pas la hauteur de sa cible.** L'original n'en tient compte que pour le
-  joueur ; viser au-dessus d'un ennemi ne le sauve pas.
-- **Les décors arrêtent les tirs.** Tout objet de type inférieur ou égal à un ennemi fait
-  obstacle : un pilier protège ce qui est derrière.
-- **Entre deux cibles à portée, c'est la plus proche qui encaisse.** L'original prend la
-  première de sa liste de case, c'est-à-dire un ordre de placement — deux ennemis côte à
-  côte se volaient alors les coups.
+- **A shot does not test its target's height.** The original only takes it into account for the
+  player; aiming above an enemy does not save it.
+- **Scenery stops shots.** Any object of a type lower than or equal to an enemy is an
+  obstacle: a pillar protects what is behind it.
+- **Between two targets in range, the nearest one takes the hit.** The original takes the
+  first in its cell list, that is, a placement order — two enemies side by
+  side would then steal each other's hits.
 
-Et quelques écarts de forme, faute d'équivalent :
+And a few departures in form, for lack of an equivalent:
 
-- **Le moniteur du terminal et des menus a un fond opaque**, là où l'original emploie des
-  sprites transparents ; ses teintes exactes ne se déduisent pas de la source. Les
-  messages en jeu, eux, s'impriment en transparence.
-- **La souris n'est pas employée** : la page des contrôles ne propose que le clavier. Le
-  **filtre audio**, un passe-bas du matériel Amiga, cède sa ligne à l'interrupteur des
-  bruitages.
-- **Les touches par défaut** suivent les habitudes d'aujourd'hui ; celles de l'original —
-  Alt gauche pour tirer, Ctrl pour courir, Maj pour le pas de côté — se rétablissent dans
-  la page clavier.
-- **Les textures animées** avancent à 6,25 images par seconde, la cadence voulue. Celle de
-  l'original dépendait de la vitesse d'affichage de la machine.
-- **L'écran de chargement** écrit avec une police à chasse fixe de huit pixels : celle de
-  l'original, la police système de l'Amiga, ne fait pas partie des données.
-- **Un son qui boucle** — seul le lance-flammes le fait — reprend tout son échantillon, là
-  où l'original ne reprend que la partie qui suit le point de boucle.
-- **Les pixels** sont en 1×1 au premier lancement, et non en 2×2.
+- **The terminal and menu monitor has an opaque background**, where the original uses
+  transparent sprites; its exact tints cannot be deduced from the source. The
+  in-game messages, for their part, are printed transparently.
+- **The mouse is not used**: the controls page only offers the keyboard. The
+  **audio filter**, a low-pass of the Amiga hardware, gives up its line to the sound
+  effects switch.
+- **The default keys** follow today's habits; the original's —
+  left Alt to fire, Ctrl to run, Shift to sidestep — can be restored in
+  the keyboard page.
+- **Animated textures** advance at 6.25 frames per second, the intended rate. The
+  original's depended on the machine's display speed.
+- **The loading screen** writes with an eight-pixel fixed-width font: the
+  original's, the Amiga system font, is not part of the data.
+- **A looping sound** — only the flamethrower does this — replays its whole sample, where
+  the original only replays the part that follows the loop point.
+- **Pixels** are 1×1 on first launch, not 2×2.
 
-L'audit qui a comparé le portage aux sources, point par point, est dans
+The audit that compared the port to the sources, point by point, is in
 [`docs/audit-sources.md`](docs/audit-sources.md).
 
-## Feuille de route
+## Roadmap
 
-- [x] **Socle** — décompression SLZ/VDCO, conteneur `.GLD`, validée sur les 25 fichiers
-- [x] **Données de niveau** — parseur `LGLD`, validé sur les 20 niveaux
-- [x] **Textures et palette** — parseurs `TGLD` et `GGLD`, export PNG de vérification
-- [x] **Raycaster et murs** — DDA en 16.16, textures principales, hautes et basses,
-      éclairage par table ; rendu vérifié sur les 20 niveaux
-- [x] **Sols, plafonds et ciel** — perspective par segments horizontaux
-- [x] **Jalon 1 : parcourir un niveau** — déplacement avec inertie, collisions et
-      glissement le long des murs, fenêtre jMonkeyEngine
-- [x] **Objets et sprites** — parseur `OGLD`, rendu des sprites avec tri par profondeur
-      et découpe contre le décor
-- [x] **Jalon 2 : le monde bouge** — portes, ascenseurs, sols et plafonds mobiles,
-      réveil des ennemis, lumières clignotantes, animations de textures et d'objets
-- [x] **État du joueur** — santé, boucliers, énergie, crédits, clés ; ramassage des
-      objets et sols nocifs
-- [x] **Armes et projectiles** — six armes, tir, vol, impacts et explosions
-- [x] **IA ennemie** — poursuite, errance, visée, tir et animation de marche
-- [x] **Panneau de bord** — les cinq compteurs, les voyants de clés et les six numéros
-      d'armes, sur l'image d'origine
-- [x] **Carte automatique** — relevé par trois rayons, tracé des passages selon leur
-      franchissement
-- [x] **Terminal** — les quatre pages de la boutique, les prix d'origine, achats d'armes,
-      d'améliorations et d'accessoires
-- [x] **Jalon 3 : le jeu** — panneau de bord, carte, terminal, téléport et fin de niveau.
-      **Les dix-sept effets du moteur d'origine sont portés** : un test joue toutes les
-      listes des vingt niveaux et vérifie qu'aucun ne manque
-- [x] **Bruitages** — parseur `SGLD`, liens et tirages, export WAV, lecture en jeu
-- [x] **Musique** — décodeur P61A, conversion en ProTracker, lecteur, musique par niveau
-- [x] **Viseur** — le motif d'origine, au centre de la vue
-- [x] **Codes de niveau** — codage exact, vérifié contre le code du jeu
-- [x] **Réglages d'affichage** — huit tailles de fenêtre, quatre grosseurs de pixel,
-      tenture de fond
-- [x] **Écrans fixes** — titre, présentations de monde, fin de partie, décompressés
-      depuis la banque graphique
-- [x] **Menu de configuration** — fenêtre, son, viseur, code de la partie
-- [x] **Jalon 4 : finitions** — audio, musique, codes de niveau, viseur, réglages
-      d'affichage, écrans fixes et menu
-- [x] **Audit contre les sources** — effets définitifs et clés, IA cadencée par
-      `obj_cont1`, collisions joueur/objets et ennemi/objets, chute, regard vertical,
-      balancement, rendu des sprites selon le pixel, ciel, fondus, écran de chargement,
-      menus d'origine, messages, son à quatre canaux
-- [x] **Tenue du jeu** — trois tentatives, pause, cadence de tir au coup par coup, chute
-      des ennemis, barème de points, séquence complète des écrans, redéfinition des
-      touches et sauvegarde des réglages
+- [x] **Foundation** — SLZ/VDCO decompression, `.GLD` container, validated on the 25 files
+- [x] **Level data** — `LGLD` parser, validated on the 20 levels
+- [x] **Textures and palette** — `TGLD` and `GGLD` parsers, PNG export for checking
+- [x] **Raycaster and walls** — 16.16 DDA, main, upper and lower textures,
+      table-based lighting; rendering checked on the 20 levels
+- [x] **Floors, ceilings and sky** — perspective by horizontal segments
+- [x] **Milestone 1: walking through a level** — movement with inertia, collisions and
+      sliding along walls, jMonkeyEngine window
+- [x] **Objects and sprites** — `OGLD` parser, sprite rendering with depth sorting
+      and clipping against the scenery
+- [x] **Milestone 2: the world moves** — doors, lifts, moving floors and ceilings,
+      enemy waking, flashing lights, texture and object animations
+- [x] **Player state** — health, shields, energy, credits, keys; object pickup
+      and harmful floors
+- [x] **Weapons and projectiles** — six weapons, firing, flight, impacts and explosions
+- [x] **Enemy AI** — chasing, wandering, aiming, firing and walking animation
+- [x] **Status panel** — the five counters, the key indicators and the six weapon
+      numbers, on the original image
+- [x] **Automap** — survey by three rays, passages drawn according to whether they can
+      be crossed
+- [x] **Terminal** — the four shop pages, the original prices, purchases of weapons,
+      upgrades and accessories
+- [x] **Milestone 3: the game** — status panel, map, terminal, teleport and end of level.
+      **All seventeen effects of the original engine are ported**: a test plays all the
+      lists of the twenty levels and checks that none is missing
+- [x] **Sound effects** — `SGLD` parser, links and draws, WAV export, in-game playback
+- [x] **Music** — P61A decoder, conversion to ProTracker, player, music per level
+- [x] **Crosshair** — the original pattern, in the centre of the view
+- [x] **Level codes** — exact encoding, checked against the game's code
+- [x] **Display settings** — eight window sizes, four pixel sizes,
+      background backdrop
+- [x] **Still screens** — title, world introductions, game over, decompressed
+      from the graphics bank
+- [x] **Configuration menu** — window, sound, crosshair, game code
+- [x] **Milestone 4: finishing touches** — audio, music, level codes, crosshair, display
+      settings, still screens and menu
+- [x] **Audit against the sources** — permanent effects and keys, AI paced by
+      `obj_cont1`, player/object and enemy/object collisions, falling, vertical look,
+      bobbing, sprite rendering according to pixel size, sky, fades, loading screen,
+      original menus, messages, four-channel sound
+- [x] **Game behaviour** — three attempts, pause, single-shot fire rate, enemy
+      falls, points scale, complete screen sequence, key
+      redefinition and saving of settings
 
-## Mentions légales et données du jeu
+## Legal Notice & Game Assets
 
-### Implémentation indépendante du moteur
-
-Ce projet est une réimplémentation indépendante du moteur de *Breathless*, conçue pour reproduire le comportement du jeu d'origine sur les plateformes modernes.
-
-Le moteur a été développé à partir du code source d'origine, publié en freeware par le magazine *Amiresource* ([mheyer32/Breathless](https://github.com/mheyer32/Breathless)), par analyse technique et tests de compatibilité. Ce code source n'est pas inclus dans ce dépôt.
-
-Le `Leggimi.txt` d'origine demande qu'un produit qui en dérive soit lui-même rigoureusement freeware, sans profit direct ni indirect. **Ce dépôt est freeware.**
-
-### Fichiers du jeu d'origine
-
-Ce projet nécessite des fichiers du jeu d'origine, comme l'archive des sources d'origine, qui contient les données du jeu, pour fonctionner.
-
-**Les fichiers du jeu d'origine ne sont pas inclus dans ce projet.**
-
-Chaque utilisateur doit se procurer et fournir ses propres fichiers de jeu auprès d'une source légalement autorisée. Avant de télécharger ou d'utiliser ce moteur, l'utilisateur doit confirmer qu'il possède une copie du jeu d'origine obtenue légalement.
-
-Ni ce dépôt ni les paquets publiés ne contiennent les données du jeu. Au premier lancement, le jeu propose d'aller chercher l'archive là où ses auteurs l'ont publiée, et seulement si on le lui accorde ; une copie locale l'emporte toujours.
-
-Eloane Studio n'héberge, ne distribue ni ne fournit de copies non autorisées de données de jeu protégées par le droit d'auteur.
-
-### Droits d'auteur et marques
-
-Les noms, marques, graphismes, musiques et autres éléments propriétaires de *Breathless* restent la propriété de leurs titulaires respectifs (Fields of Vision).
-
-Ce projet est une implémentation indépendante et non officielle ; il n'est ni affilié, ni approuvé, ni soutenu par les développeurs ou les éditeurs du jeu d'origine.
-
-### Préservation
-
-Ce projet a pour but de préserver le comportement technique et l'expérience de jeu des jeux vidéo classiques, tout en les rendant accessibles sur les systèmes modernes.
-
-Le moteur est fourni à des fins de compatibilité, de préservation et d'éducation.
-
-### Crédits
-
-Jeu d'origine : Fields of Vision (1995-96). Le lecteur de modules P61A livré dans les sources est de Jarno Paananen ; ce portage ne l'emploie pas : son décodeur réimplémente le *format* d'après la description publique de [p61aconv](https://github.com/howprice/p61aconv), sous licence MIT. Portage Java : **Guillaume Monet**.
-
-<details>
-<summary>English version</summary>
-
-### Legal Notice & Game Assets
-
-#### Independent Engine Implementation
+### Independent Engine Implementation
 
 This project is an independent reimplementation of the *Breathless* engine, designed to reproduce the original game's behavior on modern platforms.
 
@@ -659,7 +619,7 @@ The engine has been developed from the original source code, released as freewar
 
 The original `Leggimi.txt` asks that any derived product be strictly freeware itself, with no direct or indirect profit. **This repository is freeware.**
 
-#### Original Game Files
+### Original Game Files
 
 This project requires original game files, such as the original source archive, which holds the game data, to run.
 
@@ -671,20 +631,18 @@ Neither this repository nor the published packages contain the game data. On fir
 
 Eloane Studio does not host, distribute, or provide unauthorized copies of copyrighted game assets.
 
-#### Copyright & Trademarks
+### Copyright & Trademarks
 
 All original game names, trademarks, graphics, music, and other proprietary assets of *Breathless* remain the property of their respective copyright holders (Fields of Vision).
 
 This project is an independent, unofficial implementation and is not affiliated with, endorsed by, or sponsored by the original game's developers or publishers.
 
-#### Preservation
+### Preservation
 
 The purpose of this project is to preserve the technical behavior and gameplay experience of classic video games while making them accessible on modern systems.
 
 The engine is provided for compatibility, preservation, and educational purposes.
 
-#### Credits
+### Credits
 
 Original game: Fields of Vision (1995-96). The P61A module player shipped with the sources is by Jarno Paananen; this port does not use it: its decoder reimplements the *format* from the public description in [p61aconv](https://github.com/howprice/p61aconv), under the MIT licence. Java port: **Guillaume Monet**.
-
-</details>
